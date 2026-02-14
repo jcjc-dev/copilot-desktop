@@ -40,10 +40,81 @@ pub struct Settings {
     pub system_prompt: Option<String>,
 }
 
+/// Find the copilot CLI executable, searching common macOS/Linux/Windows paths
+/// that may not be in the GUI app's PATH.
+fn find_copilot_cli_path() -> Option<std::path::PathBuf> {
+    // Check COPILOT_CLI_PATH env var first
+    if let Ok(p) = std::env::var("COPILOT_CLI_PATH") {
+        let path = std::path::PathBuf::from(p.trim());
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    // Check PATH (works in terminal, may not in GUI apps)
+    if let Ok(p) = which::which("copilot") {
+        return Some(p);
+    }
+
+    // Common install locations for GUI apps that don't inherit full shell PATH
+    let extra_paths = [
+        "/opt/homebrew/bin/copilot",        // Homebrew Apple Silicon
+        "/usr/local/bin/copilot",           // Homebrew Intel / manual install
+        "/usr/bin/copilot",                 // System-wide
+        "/snap/bin/copilot",                // Snap (Linux)
+    ];
+    for p in &extra_paths {
+        let path = std::path::PathBuf::from(p);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    // Check home directory locations
+    if let Ok(home) = std::env::var("HOME") {
+        let home_paths = [
+            format!("{}/.local/bin/copilot", home),
+            format!("{}/.cargo/bin/copilot", home),
+            format!("{}/bin/copilot", home),
+        ];
+        for p in &home_paths {
+            let path = std::path::PathBuf::from(p);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        // Windows-specific paths
+        if let Ok(p) = which::which("copilot.cmd") {
+            return Some(p);
+        }
+        if let Ok(p) = which::which("copilot.exe") {
+            return Some(p);
+        }
+        if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+            let p = std::path::PathBuf::from(format!("{}\\Programs\\copilot-cli\\copilot.exe", appdata));
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+
+    None
+}
+
 #[tauri::command]
 pub async fn start_client(state: State<'_, AppState>) -> Result<(), String> {
+    let cli_path = find_copilot_cli_path()
+        .ok_or_else(|| "Could not find Copilot CLI. Install it with: npm install -g @anthropic-ai/copilot or brew install copilot, then ensure 'copilot' is in your PATH or set COPILOT_CLI_PATH.".to_string())?;
+
+    tracing::info!("Found Copilot CLI at: {}", cli_path.display());
+
     let client = copilot_sdk::Client::builder()
         .use_stdio(true)
+        .cli_path(&cli_path)
         .build()
         .map_err(|e| format!("Failed to build client: {}", e))?;
 
