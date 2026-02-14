@@ -1,0 +1,12 @@
+services:
+  test:
+    build:
+      context: .
+      target: test
+    command: make test
+
+  lint:
+    build:
+      context: .
+      target: test
+    command: make lint
