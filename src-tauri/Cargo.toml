@@ -18,8 +18,34 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.5.4" }
 
 [dependencies]
-serde_json = "1.0"
-serde = { version = "1.0", features = ["derive"] }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.10.0" }
 tauri-plugin-log = "2"
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Error handling
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# UUID for conversation IDs
+uuid = { version = "1", features = ["v4"] }
+
+# Copilot SDK
+copilot-sdk = { git = "https://github.com/copilot-community-sdk/copilot-sdk-rust", branch = "main" }
+
+# DateTime
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio-test = "0.4"
