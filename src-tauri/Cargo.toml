@@ -26,9 +26,10 @@ tauri-plugin-log = "2"
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio-util = "0.7"
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
 
 # Error handling
 thiserror = "2"
@@ -40,14 +41,17 @@ tracing-subscriber = "0.3"
 # UUID for conversation IDs
 uuid = { version = "1", features = ["v4"] }
 
-# Copilot SDK
-copilot-sdk = { git = "https://github.com/copilot-community-sdk/copilot-sdk-rust", branch = "main" }
+# Pinned to specific revision for stability. Update deliberately after testing.
+copilot-sdk = { git = "https://github.com/copilot-community-sdk/copilot-sdk-rust", rev = "109f234b7be6cf59768e3814a01412ade25fb62e" }
 
 # DateTime
 chrono = { version = "0.4", features = ["serde"] }
 
 # Executable finding
 which = "7"
+
+# TypeScript type generation from Rust structs
+ts-rs = { version = "12", features = ["serde-compat"] }
 
 [dev-dependencies]
 tempfile = "3"

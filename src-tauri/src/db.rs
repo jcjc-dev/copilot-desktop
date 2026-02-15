@@ -1,9 +1,46 @@
 use rusqlite::{Connection, Result as SqlResult, params};
 use crate::commands::{Conversation, Message};
 
+/// Derives a database encryption key from the database file path.
+/// This provides basic encryption at rest tied to the current file location.
+fn derive_encryption_key(path: &str) -> String {
+    // Simple key derivation: hash the path with a fixed salt.
+    // A production system should use OS keychain or hardware-backed storage.
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    "copilot-desktop-db-salt-2024".hash(&mut hasher);
+    path.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
 pub fn open_db(path: &str) -> SqlResult<Connection> {
+    // Restrict file permissions before opening so the DB file is created with safe mode
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if std::path::Path::new(path).exists() {
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(path, perms).ok();
+        }
+    }
+
     let conn = Connection::open(path)?;
+
+    // Enable SQLCipher encryption at rest
+    let key = derive_encryption_key(path);
+    conn.pragma_update(None, "key", &key)?;
+
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+
+    // Set restrictive permissions on newly created DB files
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(path, perms).ok();
+    }
+
     Ok(conn)
 }
 
@@ -54,11 +91,13 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> SqlResult<()> {
     Ok(())
 }
 
-pub fn list_conversations(conn: &Connection) -> SqlResult<Vec<Conversation>> {
+pub fn list_conversations(conn: &Connection, limit: Option<i64>, offset: Option<i64>) -> SqlResult<Vec<Conversation>> {
+    let limit = limit.unwrap_or(50);
+    let offset = offset.unwrap_or(0);
     let mut stmt = conn.prepare(
-        "SELECT id, title, model, created_at, updated_at FROM conversations ORDER BY updated_at DESC",
+        "SELECT id, title, model, created_at, updated_at FROM conversations ORDER BY updated_at DESC LIMIT ?1 OFFSET ?2",
     )?;
-    let rows = stmt.query_map([], |row| {
+    let rows = stmt.query_map(params![limit, offset], |row| {
         Ok(Conversation {
             id: row.get(0)?,
             title: row.get(1)?,
@@ -71,20 +110,26 @@ pub fn list_conversations(conn: &Connection) -> SqlResult<Vec<Conversation>> {
 }
 
 pub fn create_conversation(conn: &Connection, id: &str, title: &str, model: Option<&str>) -> SqlResult<Conversation> {
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "INSERT INTO conversations (id, title, model) VALUES (?1, ?2, ?3)",
         params![id, title, model],
     )?;
-    let mut stmt = conn.prepare("SELECT id, title, model, created_at, updated_at FROM conversations WHERE id = ?1")?;
-    stmt.query_row(params![id], |row| {
-        Ok(Conversation {
-            id: row.get(0)?,
-            title: row.get(1)?,
-            model: row.get(2)?,
-            created_at: row.get(3)?,
-            updated_at: row.get(4)?,
-        })
-    })
+    let convo = tx.query_row(
+        "SELECT id, title, model, created_at, updated_at FROM conversations WHERE id = ?1",
+        params![id],
+        |row| {
+            Ok(Conversation {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                model: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        },
+    )?;
+    tx.commit()?;
+    Ok(convo)
 }
 
 pub fn get_conversation(conn: &Connection, id: &str) -> SqlResult<Option<Conversation>> {
@@ -103,11 +148,13 @@ pub fn get_conversation(conn: &Connection, id: &str) -> SqlResult<Option<Convers
     }
 }
 
-pub fn get_conversation_messages(conn: &Connection, conversation_id: &str) -> SqlResult<Vec<Message>> {
+pub fn get_conversation_messages(conn: &Connection, conversation_id: &str, limit: Option<i64>, offset: Option<i64>) -> SqlResult<Vec<Message>> {
+    let limit = limit.unwrap_or(100);
+    let offset = offset.unwrap_or(0);
     let mut stmt = conn.prepare(
-        "SELECT id, conversation_id, role, content, created_at FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC",
+        "SELECT id, conversation_id, role, content, created_at FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC LIMIT ?2 OFFSET ?3",
     )?;
-    let rows = stmt.query_map(params![conversation_id], |row| {
+    let rows = stmt.query_map(params![conversation_id, limit, offset], |row| {
         Ok(Message {
             id: row.get(0)?,
             conversation_id: row.get(1)?,
@@ -120,21 +167,23 @@ pub fn get_conversation_messages(conn: &Connection, conversation_id: &str) -> Sq
 }
 
 pub fn delete_conversation(conn: &Connection, id: &str) -> SqlResult<()> {
-    conn.execute("DELETE FROM messages WHERE conversation_id = ?1", params![id])?;
-    conn.execute("DELETE FROM conversations WHERE id = ?1", params![id])?;
-    Ok(())
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM messages WHERE conversation_id = ?1", params![id])?;
+    tx.execute("DELETE FROM conversations WHERE id = ?1", params![id])?;
+    tx.commit()
 }
 
 pub fn save_message(conn: &Connection, msg: &Message) -> SqlResult<()> {
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![msg.id, msg.conversation_id, msg.role, msg.content, msg.created_at],
     )?;
-    conn.execute(
+    tx.execute(
         "UPDATE conversations SET updated_at = datetime('now') WHERE id = ?1",
         params![msg.conversation_id],
     )?;
-    Ok(())
+    tx.commit()
 }
 
 pub fn update_conversation_title(conn: &Connection, id: &str, title: &str) -> SqlResult<()> {
@@ -191,7 +240,7 @@ mod tests {
         assert_eq!(convo.title, "Test Chat");
         assert_eq!(convo.model, Some("gpt-4".to_string()));
 
-        let convos = list_conversations(&conn).unwrap();
+        let convos = list_conversations(&conn, None, None).unwrap();
         assert_eq!(convos.len(), 1);
 
         let fetched = get_conversation(&conn, "test-id-1").unwrap();
@@ -202,7 +251,7 @@ mod tests {
         assert!(missing.is_none());
 
         delete_conversation(&conn, "test-id-1").unwrap();
-        let convos = list_conversations(&conn).unwrap();
+        let convos = list_conversations(&conn, None, None).unwrap();
         assert_eq!(convos.len(), 0);
     }
 
@@ -230,7 +279,7 @@ mod tests {
         };
         save_message(&conn, &msg2).unwrap();
 
-        let msgs = get_conversation_messages(&conn, "convo-1").unwrap();
+        let msgs = get_conversation_messages(&conn, "convo-1", None, None).unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[1].role, "assistant");
@@ -262,7 +311,7 @@ mod tests {
         save_message(&conn, &msg).unwrap();
 
         delete_conversation(&conn, "convo-1").unwrap();
-        let msgs = get_conversation_messages(&conn, "convo-1").unwrap();
+        let msgs = get_conversation_messages(&conn, "convo-1", None, None).unwrap();
         assert_eq!(msgs.len(), 0);
     }
 
@@ -283,7 +332,7 @@ mod tests {
             [],
         ).unwrap();
 
-        let convos = list_conversations(&conn).unwrap();
+        let convos = list_conversations(&conn, None, None).unwrap();
         assert_eq!(convos.len(), 2);
         // Most recent first
         assert_eq!(convos[0].id, "new");
@@ -313,7 +362,7 @@ mod tests {
         }
 
         // 3. Verify messages are ordered correctly
-        let msgs = get_conversation_messages(&conn, "workflow-1").unwrap();
+        let msgs = get_conversation_messages(&conn, "workflow-1", None, None).unwrap();
         assert_eq!(msgs.len(), 5);
         assert_eq!(msgs[0].content, "Message 0");
         assert_eq!(msgs[4].content, "Message 4");
@@ -325,14 +374,14 @@ mod tests {
 
         // 5. Create another conversation
         create_conversation(&conn, "workflow-2", "Another Chat", None).unwrap();
-        let convos = list_conversations(&conn).unwrap();
+        let convos = list_conversations(&conn, None, None).unwrap();
         assert_eq!(convos.len(), 2);
 
         // 6. Delete first conversation - messages should cascade
         delete_conversation(&conn, "workflow-1").unwrap();
-        let msgs = get_conversation_messages(&conn, "workflow-1").unwrap();
+        let msgs = get_conversation_messages(&conn, "workflow-1", None, None).unwrap();
         assert_eq!(msgs.len(), 0);
-        let convos = list_conversations(&conn).unwrap();
+        let convos = list_conversations(&conn, None, None).unwrap();
         assert_eq!(convos.len(), 1);
         assert_eq!(convos[0].id, "workflow-2");
     }
@@ -377,7 +426,7 @@ mod tests {
         };
         save_message(&conn, &msg).unwrap();
 
-        let msgs = get_conversation_messages(&conn, "c1").unwrap();
+        let msgs = get_conversation_messages(&conn, "c1", None, None).unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "");
     }
@@ -399,7 +448,7 @@ mod tests {
         };
         save_message(&conn, &msg).unwrap();
 
-        let msgs = get_conversation_messages(&conn, "c1").unwrap();
+        let msgs = get_conversation_messages(&conn, "c1", None, None).unwrap();
         assert!(msgs[0].content.contains("DROP TABLE"));
     }
 
@@ -420,7 +469,7 @@ mod tests {
         };
         save_message(&conn, &msg).unwrap();
 
-        let msgs = get_conversation_messages(&conn, "unicode").unwrap();
+        let msgs = get_conversation_messages(&conn, "unicode", None, None).unwrap();
         assert!(msgs[0].content.contains("こんにちは"));
         assert!(msgs[0].content.contains("🌍"));
     }
