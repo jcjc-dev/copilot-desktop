@@ -31,17 +31,38 @@ pub fn open_db(path: &str) -> SqlResult<Connection> {
     let key = derive_encryption_key(path);
     conn.pragma_update(None, "key", &key)?;
 
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    // Verify the key works by running a simple query.
+    // If the DB was previously unencrypted, this will fail with NotADatabase.
+    match conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;") {
+        Ok(_) => {}
+        Err(rusqlite::Error::SqliteFailure(err, _))
+            if err.extended_code == 26 /* SQLITE_NOTADB */ =>
+        {
+            // Existing unencrypted DB — open without encryption for backward compatibility.
+            // A future migration can re-encrypt with `sqlcipher_export`.
+            tracing::warn!("Database is not encrypted; opening without encryption for compatibility");
+            drop(conn);
+            let conn = Connection::open(path)?;
+            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+            set_file_permissions(path);
+            return Ok(conn);
+        }
+        Err(e) => return Err(e),
+    }
 
-    // Set restrictive permissions on newly created DB files
+    set_file_permissions(path);
+    Ok(conn)
+}
+
+/// Set restrictive permissions on the DB file (Unix only).
+#[allow(unused_variables)]
+fn set_file_permissions(path: &str) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let perms = std::fs::Permissions::from_mode(0o600);
         std::fs::set_permissions(path, perms).ok();
     }
-
-    Ok(conn)
 }
 
 pub fn init_schema(conn: &Connection) -> SqlResult<()> {

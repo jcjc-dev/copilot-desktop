@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
-import { conversations, activeConversationId, messages, isStreaming, cacheMessages, getCachedMessages, clearCachedMessages, clearAllCachedMessages } from './chat';
+import { conversations, activeConversationId, messages, isStreaming, streamingState, resetStreamingState, cacheMessages, getCachedMessages, clearCachedMessages, clearAllCachedMessages } from './chat';
 
 describe('chat store', () => {
   beforeEach(() => {
     conversations.set([]);
     activeConversationId.set(null);
     messages.set([]);
-    isStreaming.set(false);
+    resetStreamingState();
     clearAllCachedMessages();
   });
 

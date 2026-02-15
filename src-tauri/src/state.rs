@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use tokio::sync::RwLock;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
+use tokio_util::sync::CancellationToken;
 use copilot_sdk::{Client, Session};
 use rusqlite::Connection;
 
@@ -8,6 +9,8 @@ pub struct SessionInfo {
     pub session: Arc<Session>,
     pub model: Option<String>,
     pub system_prompt: Option<String>,
+    /// Token used to cancel the event-processing task when the session is destroyed.
+    pub cancel_token: CancellationToken,
 }
 
 pub struct AppState {

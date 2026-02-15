@@ -1,5 +1,6 @@
 import { get } from 'svelte/store';
-import { conversations, activeConversationId, messages, isStreaming, cacheMessages, getCachedMessages, type Conversation, type Message } from '$lib/stores/chat';
+import { conversations, activeConversationId, messages, streamingState, cacheMessages, getCachedMessages, type Conversation, type Message } from '$lib/stores/chat';
+import { resetSession } from '$lib/services/chat';
 
 /**
  * Save the current conversation's messages to the in-memory cache
@@ -9,7 +10,8 @@ function saveCurrentToCache() {
   const currentId = get(activeConversationId);
   if (currentId) {
     const currentMsgs = get(messages);
-    cacheMessages(currentId, currentMsgs);
+    // Filter out any streaming placeholders so they never persist in cache
+    cacheMessages(currentId, currentMsgs.filter(m => m.id !== 'streaming'));
   }
 }
 
@@ -31,9 +33,12 @@ export async function switchConversation(conversationId: string) {
     // Persist current conversation's messages in cache before switching
     saveCurrentToCache();
 
+    // Destroy the SDK session so the new conversation gets a fresh context
+    await resetSession();
+
     // If streaming was in progress for the old conversation, stop the UI indicator
     // (the background request continues and results are captured by the session-aware handlers)
-    isStreaming.set(false);
+    streamingState.update(s => ({ ...s, isActive: false }));
 
     activeConversationId.set(conversationId);
 
@@ -70,10 +75,11 @@ export async function removeConversation(conversationId: string) {
   }
 }
 
-export function startNewChat() {
+export async function startNewChat() {
   // Persist current conversation's messages before clearing
   saveCurrentToCache();
-  isStreaming.set(false);
+  await resetSession();
+  streamingState.update(s => ({ ...s, isActive: false }));
   activeConversationId.set(null);
   messages.set([]);
 }

@@ -1,21 +1,58 @@
+use std::time::Duration;
 use tauri::{Emitter, State};
+use tokio_util::sync::CancellationToken;
+use ts_rs::TS;
+use crate::error::AppError;
 use crate::state::AppState;
 use crate::db;
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+const MAX_MESSAGE_SIZE: usize = 1_000_000; // 1MB
+const MAX_TITLE_LENGTH: usize = 200;
+const MAX_SETTING_VALUE_SIZE: usize = 100_000; // 100KB
+
+/// Acquires the database lock, checks that the connection is initialized,
+/// and passes a reference to the closure `f`.
+async fn with_db<F, R>(state: &AppState, f: F) -> Result<R, String>
+where
+    F: FnOnce(&rusqlite::Connection) -> Result<R, String>,
+{
+    let db_guard = state.db.lock().await;
+    let conn = db_guard.as_ref().ok_or_else(|| {
+        "Database not initialized.".to_string()
+    })?;
+    f(conn)
+}
+const DEFAULT_EVENT_TIMEOUT_SECS: u64 = 120;
+
+/// Per-event timeout for the streaming event loop.
+/// If no event arrives within this window the loop emits whatever partial
+/// content has been collected and reports a timeout error to the frontend.
+/// Override with the COPILOT_EVENT_TIMEOUT_SECS environment variable.
+fn event_timeout() -> Duration {
+    let secs: u64 = std::env::var("COPILOT_EVENT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_EVENT_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct AuthStatus {
     pub authenticated: bool,
     pub username: Option<String>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct ModelInfo {
     pub id: String,
     pub name: String,
     pub provider: Option<String>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct Conversation {
     pub id: String,
     pub title: String,
@@ -24,7 +61,8 @@ pub struct Conversation {
     pub updated_at: String,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct Message {
     pub id: String,
     pub conversation_id: String,
@@ -33,7 +71,8 @@ pub struct Message {
     pub created_at: String,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct Settings {
     pub theme: String,
     pub default_model: Option<String>,
@@ -115,17 +154,34 @@ fn find_copilot_cli_path() -> Option<std::path::PathBuf> {
 #[tauri::command]
 pub async fn start_client(state: State<'_, AppState>) -> Result<(), String> {
     let cli_path = find_copilot_cli_path()
-        .ok_or_else(|| "Could not find Copilot CLI. Install via: brew install copilot-cli, or set COPILOT_CLI_PATH env var.".to_string())?;
+        .ok_or_else(|| -> String { AppError::NotFound("Could not find Copilot CLI. Install via: brew install copilot-cli, or set COPILOT_CLI_PATH env var.".into()).into() })?;
 
     tracing::info!("Starting Copilot client with CLI at: {}", cli_path.display());
+
+    // Isolate the SDK process into a dedicated directory so it does NOT inherit
+    // the repo working directory and cannot access the source tree.
+    let isolated_dir = std::env::temp_dir().join("copilot-desktop-sandbox");
+    std::fs::create_dir_all(&isolated_dir)
+        .map_err(|e| -> String {
+            tracing::error!("Failed to create sandbox dir ({}): {}", isolated_dir.display(), e);
+            AppError::Internal("Failed to initialize working directory. Please check disk permissions.".into()).into()
+        })?;
+    tracing::info!("SDK sandbox directory: {}", isolated_dir.display());
 
     let client = copilot_sdk::Client::builder()
         .use_stdio(true)
         .cli_path(&cli_path)
+        .cwd(&isolated_dir)
         .build()
-        .map_err(|e| format!("Failed to build client: {}", e))?;
+        .map_err(|e| -> String {
+            tracing::error!("Failed to build client: {}", e);
+            AppError::Internal("Failed to build client. Please check your Copilot CLI installation.".into()).into()
+        })?;
 
-    client.start().await.map_err(|e| format!("Failed to start client (cli_path={}): {}", cli_path.display(), e))?;
+    client.start().await.map_err(|e| -> String {
+        tracing::error!("Failed to start client (cli_path={}): {}", cli_path.display(), e);
+        AppError::Internal("Failed to start client. Please check that Copilot CLI is installed.".into()).into()
+    })?;
 
     let mut client_guard = state.client.write().await;
     *client_guard = Some(client);
@@ -174,7 +230,10 @@ pub async fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelInfo>, S
     let client = client_guard.as_ref().ok_or("Client not started")?;
 
     let sdk_models = client.list_models().await
-        .map_err(|e| format!("Failed to list models: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Failed to list models: {}", e);
+            "Failed to list models. Please check your connection and try again.".to_string()
+        })?;
 
     let models: Vec<ModelInfo> = sdk_models.iter().map(|m| ModelInfo {
         id: m.id.clone(),
@@ -192,6 +251,21 @@ pub async fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelInfo>, S
 }
 
 #[tauri::command]
+pub async fn refresh_model_list(state: State<'_, AppState>) -> Result<(), String> {
+    // Clear the app-level cache
+    {
+        let mut cache = state.cached_models.write().await;
+        *cache = None;
+    }
+    // Clear the SDK-level cache so the CLI re-fetches from the server
+    let client_guard = state.client.read().await;
+    if let Some(client) = client_guard.as_ref() {
+        client.clear_models_cache().await;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn create_session(
     state: State<'_, AppState>,
     model: Option<String>,
@@ -201,6 +275,11 @@ pub async fn create_session(
     let client = client_guard.as_ref().ok_or("Client not started")?;
 
     let mut config = copilot_sdk::SessionConfig::default();
+    // Pin the session working directory to the sandbox so the model does not
+    // see the application source tree.
+    let isolated_dir = std::env::temp_dir().join("copilot-desktop-sandbox");
+    config.working_directory = Some(isolated_dir.to_string_lossy().into_owned());
+
     if let Some(ref model_id) = model {
         config.model = Some(model_id.clone());
     }
@@ -212,7 +291,10 @@ pub async fn create_session(
     }
 
     let session = client.create_session(config).await
-        .map_err(|e| format!("Failed to create session: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Failed to create session: {}", e);
+            "Failed to create session. Please try again.".to_string()
+        })?;
 
     let session_id = session.session_id().to_string();
 
@@ -221,6 +303,7 @@ pub async fn create_session(
         session,
         model,
         system_prompt,
+        cancel_token: CancellationToken::new(),
     });
 
     Ok(session_id)
@@ -232,7 +315,11 @@ pub async fn destroy_session(
     session_id: String,
 ) -> Result<(), String> {
     let mut sessions = state.sessions.write().await;
-    sessions.remove(&session_id);
+    if let Some(info) = sessions.remove(&session_id) {
+        // Cancel the event-processing task so it stops emitting events immediately
+        info.cancel_token.cancel();
+        tracing::info!("Session {} destroyed and event loop cancelled", session_id);
+    }
     Ok(())
 }
 
@@ -273,62 +360,173 @@ pub async fn send_message(
     session_id: String,
     content: String,
 ) -> Result<(), String> {
+    if content.len() > MAX_MESSAGE_SIZE {
+        return Err(AppError::Validation("Message is too large. Please shorten your message.".into()).into());
+    }
+    if content.trim().is_empty() {
+        return Err(AppError::Validation("Message cannot be empty.".into()).into());
+    }
+
     let session = {
         let sessions = state.sessions.read().await;
         let session_info = sessions.get(&session_id)
-            .ok_or("Session not found")?;
-        session_info.session.clone()
+            .ok_or::<String>(AppError::NotFound("Session not found".into()).into())?;
+        (session_info.session.clone(), session_info.cancel_token.clone())
     };
 
-    let mut events = session.subscribe();
+    let mut events = session.0.subscribe();
 
-    session.send(&*content).await
-        .map_err(|e| format!("Failed to send message: {}", e))?;
+    session.0.send(&*content).await
+        .map_err(|e| -> String {
+            tracing::error!("Failed to send message (session {}): {}", session_id, e);
+            AppError::Network("Failed to send message. Please try again.".into()).into()
+        })?;
 
     let sid = session_id;
     let app_handle = app.clone();
+    let verbose = crate::is_verbose();
+    let timeout = event_timeout();
+    let cancel = session.1;
     tokio::spawn(async move {
+        if verbose {
+            tracing::debug!("[VERBOSE] Event loop started for session {} (event timeout: {:?})", sid, timeout);
+        }
+        let mut accumulated_content = String::with_capacity(4096);
+        let mut got_any_delta = false;
         loop {
-            match events.recv().await {
-                Ok(event) => {
-                    match &event.data {
-                        copilot_sdk::SessionEventData::AssistantMessageDelta(delta) => {
-                            let _ = app_handle.emit("copilot:message-delta", MessageDeltaEvent {
-                                session_id: sid.clone(),
-                                delta: delta.delta_content.clone(),
-                            });
+            if cancel.is_cancelled() {
+                if verbose {
+                    tracing::debug!("[VERBOSE] Event loop cancelled for session {}", sid);
+                }
+                break;
+            }
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    if verbose {
+                        tracing::debug!("[VERBOSE] Event loop cancelled (select) for session {}", sid);
+                    }
+                    break;
+                }
+                result = tokio::time::timeout(timeout, events.recv()) => {
+                    match result {
+                        Ok(Ok(event)) => {
+                            if cancel.is_cancelled() { break; }
+                            match &event.data {
+                                copilot_sdk::SessionEventData::AssistantReasoningDelta(delta) => {
+                                    if verbose {
+                                        tracing::debug!("[VERBOSE] Thinking delta (session {}): {} bytes", sid, delta.delta_content.len());
+                                    }
+                                    let _ = app_handle.emit("copilot:thinking-delta", serde_json::json!({
+                                        "session_id": &sid,
+                                        "delta": &delta.delta_content,
+                                    }));
+                                }
+                                copilot_sdk::SessionEventData::AssistantReasoning(reasoning) => {
+                                    if verbose {
+                                        tracing::debug!("[VERBOSE] Thinking complete (session {}): {} chars", sid, reasoning.content.len());
+                                    }
+                                    let _ = app_handle.emit("copilot:thinking-complete", serde_json::json!({
+                                        "session_id": &sid,
+                                        "content": &reasoning.content,
+                                    }));
+                                }
+                                copilot_sdk::SessionEventData::AssistantMessageDelta(delta) => {
+                                    got_any_delta = true;
+                                    accumulated_content.push_str(&delta.delta_content);
+                                    if verbose {
+                                        tracing::debug!("[VERBOSE] Delta (session {}): {} bytes", sid, delta.delta_content.len());
+                                    }
+                                    let _ = app_handle.emit("copilot:message-delta", serde_json::json!({
+                                        "session_id": &sid,
+                                        "delta": &delta.delta_content,
+                                    }));
+                                }
+                                copilot_sdk::SessionEventData::AssistantMessage(msg) => {
+                                    if verbose {
+                                        tracing::debug!("[VERBOSE] Complete message (session {}): {} chars", sid, msg.content.len());
+                                    }
+                                    let _ = app_handle.emit("copilot:message-complete", serde_json::json!({
+                                        "session_id": &sid,
+                                        "content": &msg.content,
+                                    }));
+                                }
+                                copilot_sdk::SessionEventData::SessionIdle(_) => {
+                                    if verbose {
+                                        tracing::debug!("[VERBOSE] Session idle: {}", sid);
+                                    }
+                                    let _ = app_handle.emit("copilot:session-idle", serde_json::json!({
+                                        "session_id": &sid,
+                                    }));
+                                    break;
+                                }
+                                copilot_sdk::SessionEventData::SessionError(err) => {
+                                    tracing::error!("Session error ({}): {}", sid, err.message);
+                                    let _ = app_handle.emit("copilot:session-error", serde_json::json!({
+                                        "session_id": &sid,
+                                        "message": &err.message,
+                                    }));
+                                    break;
+                                }
+                                copilot_sdk::SessionEventData::AssistantUsage(usage) => {
+                                    if verbose {
+                                        tracing::debug!("[VERBOSE] Usage (session {}): in={:?} out={:?}", sid, usage.input_tokens, usage.output_tokens);
+                                    }
+                                    let _ = app_handle.emit("copilot:usage", serde_json::json!({
+                                        "session_id": &sid,
+                                        "input_tokens": usage.input_tokens,
+                                        "output_tokens": usage.output_tokens,
+                                    }));
+                                }
+                                _ => {
+                                    if verbose {
+                                        tracing::debug!("[VERBOSE] Unhandled event for session {}", sid);
+                                    }
+                                }
+                            }
                         }
-                        copilot_sdk::SessionEventData::AssistantMessage(msg) => {
-                            let _ = app_handle.emit("copilot:message-complete", MessageCompleteEvent {
-                                session_id: sid.clone(),
-                                content: msg.content.clone(),
-                            });
-                        }
-                        copilot_sdk::SessionEventData::SessionIdle(_) => {
-                            let _ = app_handle.emit("copilot:session-idle", SessionIdleEvent {
-                                session_id: sid.clone(),
-                            });
+                        Ok(Err(e)) => {
+                            if verbose {
+                                tracing::debug!("[VERBOSE] Event channel closed for session {}: {}", sid, e);
+                            }
+                            if got_any_delta {
+                                let _ = app_handle.emit("copilot:message-complete", serde_json::json!({
+                                    "session_id": &sid,
+                                    "content": &accumulated_content,
+                                }));
+                            }
+                            let _ = app_handle.emit("copilot:session-idle", serde_json::json!({
+                                "session_id": &sid,
+                            }));
                             break;
                         }
-                        copilot_sdk::SessionEventData::SessionError(err) => {
-                            let _ = app_handle.emit("copilot:session-error", SessionErrorEvent {
-                                session_id: sid.clone(),
-                                message: err.message.clone(),
-                            });
+                        Err(_) => {
+                            tracing::warn!("Event timeout ({:?}) for session {} — flushing partial response", timeout, sid);
+                            if got_any_delta {
+                                let _ = app_handle.emit("copilot:message-complete", serde_json::json!({
+                                    "session_id": &sid,
+                                    "content": &accumulated_content,
+                                }));
+                                let _ = app_handle.emit("copilot:session-error", serde_json::json!({
+                                    "session_id": &sid,
+                                    "message": format!("Response timed out after {:?} — partial content shown above.", timeout),
+                                }));
+                            } else {
+                                let _ = app_handle.emit("copilot:session-error", serde_json::json!({
+                                    "session_id": &sid,
+                                    "message": format!("No response received within {:?}. The model may be processing a complex request — try again or increase COPILOT_EVENT_TIMEOUT_SECS.", timeout),
+                                }));
+                            }
+                            let _ = app_handle.emit("copilot:session-idle", serde_json::json!({
+                                "session_id": &sid,
+                            }));
                             break;
                         }
-                        copilot_sdk::SessionEventData::AssistantUsage(usage) => {
-                            let _ = app_handle.emit("copilot:usage", UsageEvent {
-                                session_id: sid.clone(),
-                                input_tokens: usage.input_tokens,
-                                output_tokens: usage.output_tokens,
-                            });
-                        }
-                        _ => {}
                     }
                 }
-                Err(_) => break,
             }
+        }
+        if verbose {
+            tracing::debug!("[VERBOSE] Event loop ended for session {}", sid);
         }
     });
 
@@ -336,27 +534,41 @@ pub async fn send_message(
 }
 
 #[tauri::command]
-pub async fn list_conversations(state: State<'_, AppState>) -> Result<Vec<Conversation>, String> {
-    let db_guard = state.db.lock().map_err(|e| e.to_string())?;
-    let conn = db_guard.as_ref().ok_or("Database not initialized")?;
-    db::list_conversations(conn).map_err(|e| e.to_string())
+pub async fn list_conversations(
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<Conversation>, String> {
+    with_db(&state, |conn| {
+        db::list_conversations(conn, limit, offset).map_err(|e| {
+            tracing::error!("Failed to list conversations: {}", e);
+            "Failed to list conversations.".to_string()
+        })
+    }).await
 }
 
 #[tauri::command]
 pub async fn get_conversation(
     state: State<'_, AppState>,
     conversation_id: String,
+    limit: Option<i64>,
+    offset: Option<i64>,
 ) -> Result<(Conversation, Vec<Message>), String> {
-    let db_guard = state.db.lock().map_err(|e| e.to_string())?;
-    let conn = db_guard.as_ref().ok_or("Database not initialized")?;
+    with_db(&state, |conn| {
+        let convo = db::get_conversation(conn, &conversation_id)
+            .map_err(|e| {
+                tracing::error!("Failed to get conversation: {}", e);
+                "Failed to load conversation.".to_string()
+            })?
+            .ok_or("Conversation not found")?;
+        let msgs = db::get_conversation_messages(conn, &conversation_id, limit, offset)
+            .map_err(|e| {
+                tracing::error!("Failed to get conversation messages: {}", e);
+                "Failed to load conversation messages.".to_string()
+            })?;
 
-    let convo = db::get_conversation(conn, &conversation_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("Conversation not found")?;
-    let msgs = db::get_conversation_messages(conn, &conversation_id)
-        .map_err(|e| e.to_string())?;
-
-    Ok((convo, msgs))
+        Ok((convo, msgs))
+    }).await
 }
 
 #[tauri::command]
@@ -365,14 +577,24 @@ pub async fn create_conversation(
     title: Option<String>,
     model: Option<String>,
 ) -> Result<Conversation, String> {
-    let db_guard = state.db.lock().map_err(|e| e.to_string())?;
-    let conn = db_guard.as_ref().ok_or("Database not initialized")?;
-
     let id = uuid::Uuid::new_v4().to_string();
-    let title = title.unwrap_or_else(|| "New Chat".to_string());
+    let title = title
+        .unwrap_or_else(|| "New Chat".to_string())
+        .trim()
+        .chars()
+        .take(MAX_TITLE_LENGTH)
+        .collect::<String>();
+    if title.is_empty() {
+        return Err("Conversation title cannot be empty.".to_string());
+    }
 
-    db::create_conversation(conn, &id, &title, model.as_deref())
-        .map_err(|e| e.to_string())
+    with_db(&state, |conn| {
+        db::create_conversation(conn, &id, &title, model.as_deref())
+            .map_err(|e| {
+                tracing::error!("Failed to create conversation: {}", e);
+                "Failed to create conversation.".to_string()
+            })
+    }).await
 }
 
 #[tauri::command]
@@ -380,9 +602,12 @@ pub async fn delete_conversation(
     state: State<'_, AppState>,
     conversation_id: String,
 ) -> Result<(), String> {
-    let db_guard = state.db.lock().map_err(|e| e.to_string())?;
-    let conn = db_guard.as_ref().ok_or("Database not initialized")?;
-    db::delete_conversation(conn, &conversation_id).map_err(|e| e.to_string())
+    with_db(&state, |conn| {
+        db::delete_conversation(conn, &conversation_id).map_err(|e| {
+            tracing::error!("Failed to delete conversation: {}", e);
+            "Failed to delete conversation.".to_string()
+        })
+    }).await
 }
 
 #[tauri::command]
@@ -390,25 +615,36 @@ pub async fn save_message(
     state: State<'_, AppState>,
     message: Message,
 ) -> Result<(), String> {
-    let db_guard = state.db.lock().map_err(|e| e.to_string())?;
-    let conn = db_guard.as_ref().ok_or("Database not initialized")?;
-    db::save_message(conn, &message).map_err(|e| e.to_string())
+    with_db(&state, |conn| {
+        db::save_message(conn, &message).map_err(|e| {
+            tracing::error!("Failed to save message: {}", e);
+            "Failed to save message.".to_string()
+        })
+    }).await
 }
 
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
-    let db_guard = state.db.lock().map_err(|e| e.to_string())?;
-    let conn = db_guard.as_ref().ok_or("Database not initialized")?;
+    with_db(&state, |conn| {
+        let theme = crate::db::get_setting(conn, "theme")
+            .map_err(|e| {
+                tracing::error!("Failed to get setting 'theme': {}", e);
+                "Failed to load settings.".to_string()
+            })?
+            .unwrap_or_else(|| "dark".to_string());
+        let default_model = crate::db::get_setting(conn, "default_model")
+            .map_err(|e| {
+                tracing::error!("Failed to get setting 'default_model': {}", e);
+                "Failed to load settings.".to_string()
+            })?;
+        let system_prompt = crate::db::get_setting(conn, "system_prompt")
+            .map_err(|e| {
+                tracing::error!("Failed to get setting 'system_prompt': {}", e);
+                "Failed to load settings.".to_string()
+            })?;
 
-    let theme = crate::db::get_setting(conn, "theme")
-        .map_err(|e| e.to_string())?
-        .unwrap_or_else(|| "dark".to_string());
-    let default_model = crate::db::get_setting(conn, "default_model")
-        .map_err(|e| e.to_string())?;
-    let system_prompt = crate::db::get_setting(conn, "system_prompt")
-        .map_err(|e| e.to_string())?;
-
-    Ok(Settings { theme, default_model, system_prompt })
+        Ok(Settings { theme, default_model, system_prompt })
+    }).await
 }
 
 #[tauri::command]
@@ -416,18 +652,40 @@ pub async fn update_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<(), String> {
-    let db_guard = state.db.lock().map_err(|e| e.to_string())?;
-    let conn = db_guard.as_ref().ok_or("Database not initialized")?;
-
-    crate::db::set_setting(conn, "theme", &settings.theme).map_err(|e| e.to_string())?;
+    if settings.theme.len() > MAX_SETTING_VALUE_SIZE {
+        return Err("Theme value is too large.".to_string());
+    }
     if let Some(ref model) = settings.default_model {
-        crate::db::set_setting(conn, "default_model", model).map_err(|e| e.to_string())?;
+        if model.len() > MAX_SETTING_VALUE_SIZE {
+            return Err("Default model value is too large.".to_string());
+        }
     }
     if let Some(ref prompt) = settings.system_prompt {
-        crate::db::set_setting(conn, "system_prompt", prompt).map_err(|e| e.to_string())?;
+        if prompt.len() > MAX_SETTING_VALUE_SIZE {
+            return Err("System prompt value is too large.".to_string());
+        }
     }
 
-    Ok(())
+    with_db(&state, |conn| {
+        crate::db::set_setting(conn, "theme", &settings.theme).map_err(|e| {
+            tracing::error!("Failed to set setting 'theme': {}", e);
+            "Failed to save settings.".to_string()
+        })?;
+        if let Some(ref model) = settings.default_model {
+            crate::db::set_setting(conn, "default_model", model).map_err(|e| {
+                tracing::error!("Failed to set setting 'default_model': {}", e);
+                "Failed to save settings.".to_string()
+            })?;
+        }
+        if let Some(ref prompt) = settings.system_prompt {
+            crate::db::set_setting(conn, "system_prompt", prompt).map_err(|e| {
+                tracing::error!("Failed to set setting 'system_prompt': {}", e);
+                "Failed to save settings.".to_string()
+            })?;
+        }
+
+        Ok(())
+    }).await
 }
 
 #[cfg(test)]
@@ -443,7 +701,7 @@ mod tests {
         db::init_schema(&conn).unwrap();
 
         let state = AppState::new();
-        *state.db.lock().unwrap() = Some(conn);
+        *state.db.blocking_lock() = Some(conn);
         // Keep tmp alive so the file isn't deleted
         std::mem::forget(tmp);
         state
@@ -622,7 +880,7 @@ mod tests {
     #[test]
     fn test_create_test_state_has_working_db() {
         let state = create_test_state();
-        let db_guard = state.db.lock().unwrap();
+        let db_guard = state.db.blocking_lock();
         let conn = db_guard.as_ref().expect("DB should be initialized");
 
         db::set_setting(conn, "test_key", "test_value").unwrap();
@@ -633,7 +891,7 @@ mod tests {
     #[test]
     fn test_state_db_conversation_roundtrip() {
         let state = create_test_state();
-        let db_guard = state.db.lock().unwrap();
+        let db_guard = state.db.blocking_lock();
         let conn = db_guard.as_ref().unwrap();
 
         let convo = db::create_conversation(conn, "rt-1", "Roundtrip Test", Some("gpt-4o")).unwrap();
@@ -648,11 +906,11 @@ mod tests {
         };
         db::save_message(conn, &msg).unwrap();
 
-        let msgs = db::get_conversation_messages(conn, "rt-1").unwrap();
+        let msgs = db::get_conversation_messages(conn, "rt-1", None, None).unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "Testing roundtrip");
 
-        let convos = db::list_conversations(conn).unwrap();
+        let convos = db::list_conversations(conn, None, None).unwrap();
         assert_eq!(convos.len(), 1);
     }
 

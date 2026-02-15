@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { models, selectedModel, type ModelInfo } from '$lib/stores/models';
+  import { visibleModels, selectedModel, type ModelInfo } from '$lib/stores/models';
 
   let open = $state(false);
-  let allModels = $derived($models);
+  let allModels = $derived($visibleModels);
   let currentModel = $derived($selectedModel);
 
   function selectModel(modelId: string) {

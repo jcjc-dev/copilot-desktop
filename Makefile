@@ -29,6 +29,11 @@ install:
 dev:
 	npx tauri dev
 
+# Development with verbose logging (backend + frontend)
+# Override the per-event timeout (default 120s) with COPILOT_EVENT_TIMEOUT_SECS.
+dev-verbose:
+	COPILOT_VERBOSE=1 VITE_VERBOSE=true npx tauri dev
+
 # Production build
 build:
 	npx tauri build

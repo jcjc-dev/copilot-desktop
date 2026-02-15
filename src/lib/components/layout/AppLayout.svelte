@@ -2,6 +2,7 @@
   import { sidebarOpen } from '$lib/stores/sidebar';
   import { theme } from '$lib/stores/theme';
   import { initializeApp, shutdownApp, retryConnection, appStatus, appError } from '$lib/services/app';
+  import { handleGlobalKeydown } from '$lib/utils/shortcuts';
   import { onMount, onDestroy } from 'svelte';
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
@@ -30,6 +31,8 @@
     shutdownApp();
   });
 </script>
+
+<svelte:window onkeydown={handleGlobalKeydown} />
 
 {#if $appStatus === 'initializing'}
   <div class="fixed top-0 left-0 right-0 h-1 bg-blue-500 animate-pulse z-[999]"></div>

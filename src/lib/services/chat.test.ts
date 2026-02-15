@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { clearMocks } from '@tauri-apps/api/mocks';
 import { get } from 'svelte/store';
-import { messages, isStreaming, conversations, activeConversationId } from '$lib/stores/chat';
+import { messages, isStreaming, conversations, activeConversationId, streamingState, resetStreamingState } from '$lib/stores/chat';
 
 describe('Chat Service Integration', () => {
   beforeEach(() => {
     messages.set([]);
-    isStreaming.set(false);
+    resetStreamingState();
     conversations.set([]);
     activeConversationId.set(null);
   });
@@ -36,7 +36,7 @@ describe('Chat Service Integration', () => {
     expect(get(messages)).toHaveLength(1);
 
     // 2. Set streaming
-    isStreaming.set(true);
+    streamingState.update(s => ({ ...s, isActive: true }));
     expect(get(isStreaming)).toBe(true);
 
     // 3. Add streaming placeholder
@@ -70,7 +70,7 @@ describe('Chat Service Integration', () => {
       }
       return msgs;
     });
-    isStreaming.set(false);
+    resetStreamingState();
 
     expect(get(messages)).toHaveLength(2);
     expect(get(messages)[1].content).toBe('Hello! How can I help?');

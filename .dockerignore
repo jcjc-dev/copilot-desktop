@@ -1,6 +1,7 @@
 node_modules
-build
-src-tauri/target
+build/
+target/
 .git
+.svelte-kit/
 *.md
 !README.md

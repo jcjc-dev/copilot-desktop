@@ -70,10 +70,32 @@ function updateMessagesForStreamingConvo(updater: (msgs: Message[]) => Message[]
 export async function initChatListeners() {
   const { listen } = await import('@tauri-apps/api/event');
 
+  // --- Thinking / reasoning stream ---
+  const unlistenThinkingDelta = await listen<{ session_id: string; delta: string }>('copilot:thinking-delta', (event) => {
+    if (!isActiveSession(event.payload.session_id)) return;
+    logger.debug('thinking-delta', { session: event.payload.session_id, deltaLen: event.payload.delta.length });
+    streamingState.update(s => ({ ...s, thinking: s.thinking + event.payload.delta, isThinking: true }));
+    updateMessagesForStreamingConvo(msgs => {
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === 'assistant' && last.id === 'streaming') {
+        return [...msgs.slice(0, -1), { ...last, thinking: get(streamingState).thinking }];
+      }
+      return msgs;
+    });
+  });
+
+  const unlistenThinkingComplete = await listen<{ session_id: string; content: string }>('copilot:thinking-complete', (event) => {
+    if (!isActiveSession(event.payload.session_id)) return;
+    logger.debug('thinking-complete', { session: event.payload.session_id });
+    streamingState.update(s => ({ ...s, isThinking: false }));
+  });
+
+  // --- Message content stream ---
   const unlisten1 = await listen<{ session_id: string; delta: string }>('copilot:message-delta', (event) => {
     if (!isActiveSession(event.payload.session_id)) return;
     logger.debug('message-delta', { session: event.payload.session_id, deltaLen: event.payload.delta.length });
-    streamingState.update(s => ({ ...s, content: s.content + event.payload.delta }));
+    // Once message deltas arrive, thinking phase is over
+    streamingState.update(s => ({ ...s, content: s.content + event.payload.delta, isThinking: false }));
     updateMessagesForStreamingConvo(msgs => {
       const last = msgs[msgs.length - 1];
       if (last && last.role === 'assistant' && last.id === 'streaming') {
@@ -149,7 +171,7 @@ export async function initChatListeners() {
     resetStreamingState();
   });
 
-  unlistenFns = [unlisten1, unlisten2, unlisten3, unlisten4];
+  unlistenFns = [unlistenThinkingDelta, unlistenThinkingComplete, unlisten1, unlisten2, unlisten3, unlisten4];
 }
 
 export function cleanupChatListeners() {
@@ -210,7 +232,7 @@ export async function sendChatMessage(content: string) {
     };
     messages.update(msgs => [...msgs, assistantPlaceholder]);
 
-    streamingState.set({ isActive: true, sessionId: currentSessionId, conversationId: convoId, content: '' });
+    streamingState.set({ isActive: true, sessionId: currentSessionId, conversationId: convoId, content: '', thinking: '', isThinking: false });
     logger.debug('sendChatMessage', 'streaming session set', { sessionId: currentSessionId, convoId });
 
     await sendMessage(currentSessionId, content);

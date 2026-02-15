@@ -7,7 +7,7 @@ RUN npm ci
 # Stage 2: Frontend build
 FROM frontend-deps AS frontend-build
 COPY . .
-RUN npm run build
+RUN npm run build && rm -rf node_modules
 
 # Stage 3: Test runner
 FROM rust:1.85-bookworm AS test
@@ -17,4 +17,6 @@ WORKDIR /app
 COPY . .
 RUN npm ci
 RUN cd src-tauri && cargo fetch
+RUN groupadd -g 1001 appuser && useradd -u 1001 -g appuser -m appuser
+USER appuser
 CMD ["make", "test"]

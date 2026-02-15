@@ -13,6 +13,7 @@ export interface Message {
   conversation_id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  thinking?: string;
   created_at: string;
 }
 
@@ -37,18 +38,65 @@ function createConversationStore() {
 export const conversations = createConversationStore();
 export const activeConversationId = writable<string | null>(null);
 export const messages = writable<Message[]>([]);
-export const isStreaming = writable<boolean>(false);
+export interface StreamingState {
+  isActive: boolean;
+  sessionId: string | null;
+  conversationId: string | null;
+  content: string;
+  thinking: string;
+  isThinking: boolean;
+}
+
+export const streamingState = writable<StreamingState>({
+  isActive: false,
+  sessionId: null,
+  conversationId: null,
+  content: '',
+  thinking: '',
+  isThinking: false,
+});
+
+// Helper to reset streaming state
+export function resetStreamingState() {
+  streamingState.set({
+    isActive: false,
+    sessionId: null,
+    conversationId: null,
+    content: '',
+    thinking: '',
+    isThinking: false,
+  });
+}
+
+// Backward-compatible derived store
+export const isStreaming = derived(streamingState, $s => $s.isActive);
 
 // Per-conversation message cache so switching views doesn't lose messages
+export const MAX_CACHE_SIZE = 10;
 const messageCache = new Map<string, Message[]>();
 
 export function cacheMessages(conversationId: string, msgs: Message[]) {
-  // Strip the transient streaming placeholder before caching
+  // Move to end (most recently used) by deleting and re-inserting
+  messageCache.delete(conversationId);
+
+  // Evict oldest if at capacity
+  if (messageCache.size >= MAX_CACHE_SIZE) {
+    const oldestKey = messageCache.keys().next().value;
+    if (oldestKey) messageCache.delete(oldestKey);
+  }
+
+  // Strip streaming placeholders before caching
   messageCache.set(conversationId, msgs.filter(m => m.id !== 'streaming'));
 }
 
 export function getCachedMessages(conversationId: string): Message[] | undefined {
-  return messageCache.get(conversationId);
+  const msgs = messageCache.get(conversationId);
+  if (msgs) {
+    // Move to end for LRU
+    messageCache.delete(conversationId);
+    messageCache.set(conversationId, msgs);
+  }
+  return msgs;
 }
 
 export function clearCachedMessages(conversationId: string) {

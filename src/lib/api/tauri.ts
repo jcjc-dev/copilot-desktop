@@ -30,6 +30,7 @@ export interface Message {
   conversation_id: string;
   role: string;
   content: string;
+  thinking?: string;
   created_at: string;
 }
 
@@ -49,6 +50,10 @@ export async function stopClient(): Promise<void> {
 // Models
 export async function listModels(): Promise<ModelInfo[]> {
   return invoke('list_models');
+}
+
+export async function refreshModelList(): Promise<void> {
+  return invoke('refresh_model_list');
 }
 
 // Sessions
@@ -79,12 +84,12 @@ export async function updateSettings(settings: Settings): Promise<void> {
 }
 
 // Conversations
-export async function listConversations(): Promise<Conversation[]> {
-  return invoke('list_conversations');
+export async function listConversations(limit?: number, offset?: number): Promise<Conversation[]> {
+  return invoke('list_conversations', { limit, offset });
 }
 
-export async function getConversation(conversationId: string): Promise<[Conversation, Message[]]> {
-  return invoke('get_conversation', { conversationId });
+export async function getConversation(conversationId: string, limit?: number, offset?: number): Promise<[Conversation, Message[]]> {
+  return invoke('get_conversation', { conversationId, limit, offset });
 }
 
 export async function createConversation(title?: string, model?: string): Promise<Conversation> {

@@ -1,6 +1,21 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
 import { invoke } from '@tauri-apps/api/core';
+import type { ModelInfo, Settings, Conversation } from './tauri';
+
+interface CreateConversationArgs {
+  title?: string;
+  model?: string;
+}
+
+interface DeleteConversationArgs {
+  conversationId: string;
+}
+
+interface SendMessageArgs {
+  sessionId: string;
+  content: string;
+}
 
 describe('Tauri IPC Commands', () => {
   afterEach(() => {
@@ -36,9 +51,9 @@ describe('Tauri IPC Commands', () => {
           ];
         }
       });
-      const models = await invoke('list_models');
+      const models = await invoke<ModelInfo[]>('list_models');
       expect(models).toHaveLength(2);
-      expect((models as any)[0].id).toBe('gpt-4o');
+      expect(models[0].id).toBe('gpt-4o');
     });
 
     it('handles empty model list', async () => {
@@ -57,14 +72,14 @@ describe('Tauri IPC Commands', () => {
           return { theme: 'dark', default_model: null, system_prompt: null };
         }
       });
-      const settings = await invoke('get_settings');
-      expect((settings as any).theme).toBe('dark');
+      const settings = await invoke<Settings>('get_settings');
+      expect(settings.theme).toBe('dark');
     });
   });
 
   describe('update_settings', () => {
     it('sends settings to backend', async () => {
-      const receivedArgs: any[] = [];
+      const receivedArgs: Array<{ settings: Settings }> = [];
       mockIPC((cmd, args) => {
         if (cmd === 'update_settings') {
           receivedArgs.push(args);
@@ -85,15 +100,15 @@ describe('Tauri IPC Commands', () => {
         if (cmd === 'create_conversation') {
           return {
             id: 'conv-123',
-            title: (args as any).title || 'New Chat',
-            model: (args as any).model || null,
+            title: (args as CreateConversationArgs).title || 'New Chat',
+            model: (args as CreateConversationArgs).model || null,
             created_at: '2026-01-01T00:00:00Z',
             updated_at: '2026-01-01T00:00:00Z',
           };
         }
       });
-      const convo = await invoke('create_conversation', { title: 'Test Chat' });
-      expect((convo as any).title).toBe('Test Chat');
+      const convo = await invoke<Conversation>('create_conversation', { title: 'Test Chat' });
+      expect(convo.title).toBe('Test Chat');
     });
 
     it('lists conversations', async () => {
@@ -113,7 +128,7 @@ describe('Tauri IPC Commands', () => {
       let deletedId = '';
       mockIPC((cmd, args) => {
         if (cmd === 'delete_conversation') {
-          deletedId = (args as any).conversationId;
+          deletedId = (args as DeleteConversationArgs).conversationId;
           return null;
         }
       });
@@ -124,16 +139,16 @@ describe('Tauri IPC Commands', () => {
 
   describe('send_message', () => {
     it('sends message with session and content', async () => {
-      let sentArgs: any = null;
+      let sentArgs: SendMessageArgs | null = null;
       mockIPC((cmd, args) => {
         if (cmd === 'send_message') {
-          sentArgs = args;
+          sentArgs = args as SendMessageArgs;
           return null;
         }
       });
       await invoke('send_message', { sessionId: 'sess-1', content: 'Hello world' });
-      expect(sentArgs.sessionId).toBe('sess-1');
-      expect(sentArgs.content).toBe('Hello world');
+      expect(sentArgs!.sessionId).toBe('sess-1');
+      expect(sentArgs!.content).toBe('Hello world');
     });
   });
 

@@ -6,6 +6,7 @@
 
   let { content = '' }: { content: string } = $props();
   let renderedHtml = $state('');
+  let lastContent = '';
 
   // Configure marked with highlight.js
   marked.setOptions({
@@ -30,10 +31,25 @@
   };
 
   $effect(() => {
+    if (content === lastContent) return;
+    lastContent = content;
     const raw = marked.parse(content, { renderer }) as string;
+    // Strict DOMPurify config: only allow safe markdown/UI tags and attributes.
+    // Dangerous tags (script, iframe, object, embed, form, input) and
+    // event-handler attributes are explicitly forbidden to prevent XSS.
     renderedHtml = DOMPurify.sanitize(raw, {
-      ADD_TAGS: ['button'],
-      ADD_ATTR: ['data-code', 'class'],
+      ALLOWED_TAGS: [
+        'p', 'br', 'strong', 'em', 'b', 'i', 'u', 'code', 'pre',
+        'blockquote', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4',
+        'h5', 'h6', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+        'span', 'div', 'del', 'sup', 'sub', 'img', 'button',
+      ],
+      ALLOWED_ATTR: [
+        'href', 'target', 'rel', 'class', 'id', 'src', 'alt', 'title',
+        'data-code', 'aria-label',
+      ],
+      FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select'],
+      FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur'],
     });
   });
 

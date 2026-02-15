@@ -3,10 +3,28 @@
   import { tick } from 'svelte';
   import MessageBubble from './MessageBubble.svelte';
 
+  const INITIAL_MESSAGE_COUNT = 50;
+  let displayCount = $state(INITIAL_MESSAGE_COUNT);
+
   let messageListEl: HTMLDivElement;
   let msgList = $derived($messages);
   let streaming = $derived($isStreaming);
   let activeId = $derived($activeConversationId);
+
+  let visibleMessages = $derived(
+    msgList.length > displayCount ? msgList.slice(msgList.length - displayCount) : msgList
+  );
+  let hasEarlierMessages = $derived(msgList.length > displayCount);
+
+  // Reset display count when conversation changes
+  $effect(() => {
+    activeId;
+    displayCount = INITIAL_MESSAGE_COUNT;
+  });
+
+  function loadEarlierMessages() {
+    displayCount += INITIAL_MESSAGE_COUNT;
+  }
 
   // Auto-scroll to bottom when new messages arrive
   $effect(() => {
@@ -24,7 +42,7 @@
   <!-- Message list -->
   <div
     bind:this={messageListEl}
-    class="flex-1 overflow-y-auto px-4 py-6"
+    class="flex-1 overflow-y-auto px-4 py-6" style="contain: content;"
   >
     {#if msgList.length === 0}
       <!-- Empty state -->
@@ -40,7 +58,17 @@
       </div>
     {:else}
       <div class="max-w-3xl mx-auto space-y-6">
-        {#each msgList as message (message.id)}
+        {#if hasEarlierMessages}
+          <div class="text-center">
+            <button
+              onclick={loadEarlierMessages}
+              class="px-4 py-1.5 text-sm text-blue-600 dark:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+            >
+              Load earlier messages ({msgList.length - displayCount} more)
+            </button>
+          </div>
+        {/if}
+        {#each visibleMessages as message (message.id)}
           {#if !(message.id === 'streaming' && !message.content)}
             <MessageBubble {message} />
           {/if}

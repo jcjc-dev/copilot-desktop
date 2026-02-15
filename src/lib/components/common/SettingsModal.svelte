@@ -1,6 +1,7 @@
 <script lang="ts">
   import { settings, settingsOpen, saveSettings, type AppSettings } from '$lib/stores/settings';
   import { theme } from '$lib/stores/theme';
+  import { models, enabledModelIds, setModelEnabled, isModelEnabled, refreshModels } from '$lib/stores/models';
 
   let open = $derived($settingsOpen);
   let currentSettings = $derived($settings);
@@ -8,6 +9,10 @@
 
   let editTheme = $state('dark');
   let editSystemPrompt = $state('');
+
+  let allModels = $derived($models);
+  let currentEnabled = $derived($enabledModelIds);
+  let isRefreshing = $state(false);
 
   $effect(() => {
     editTheme = currentSettings.theme;
@@ -81,14 +86,35 @@
           <div class="space-y-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Theme</label>
-              <select
-                bind:value={editTheme}
-                class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm text-gray-900 dark:text-gray-100"
-              >
-                <option value="dark">Dark</option>
-                <option value="light">Light</option>
-                <option value="system">System</option>
-              </select>
+              <div class="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                <button
+                  onclick={() => editTheme = 'light'}
+                  class="px-4 py-2 text-sm font-medium transition-colors
+                    {editTheme === 'light'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}"
+                >
+                  Light
+                </button>
+                <button
+                  onclick={() => editTheme = 'dark'}
+                  class="px-4 py-2 text-sm font-medium border-l border-r border-gray-200 dark:border-gray-700 transition-colors
+                    {editTheme === 'dark'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}"
+                >
+                  Dark
+                </button>
+                <button
+                  onclick={() => editTheme = 'system'}
+                  class="px-4 py-2 text-sm font-medium transition-colors
+                    {editTheme === 'system'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}"
+                >
+                  System
+                </button>
+              </div>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">System Prompt</label>
@@ -101,10 +127,51 @@
             </div>
           </div>
         {:else if activeTab === 'models'}
-          <div class="space-y-4">
-            <p class="text-sm text-gray-500 dark:text-gray-400">
-              Model configuration coming soon. Models are loaded from Copilot CLI.
-            </p>
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <p class="text-sm text-gray-500 dark:text-gray-400">
+                Toggle models to show in the selector. All are shown when none are toggled on.
+              </p>
+              <button
+                onclick={async () => { isRefreshing = true; await refreshModels(); isRefreshing = false; }}
+                disabled={isRefreshing}
+                class="flex-shrink-0 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors"
+              >
+                {isRefreshing ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
+            {#if allModels.length === 0}
+              <p class="text-sm text-gray-400 dark:text-gray-500 py-4 text-center">No models loaded. Try refreshing.</p>
+            {:else}
+              <div class="divide-y divide-gray-100 dark:divide-gray-800">
+                {#each allModels as model (model.id)}
+                  <div class="flex items-center justify-between py-2.5">
+                    <div class="min-w-0">
+                      <div class="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{model.name}</div>
+                      <div class="text-xs text-gray-400 dark:text-gray-500 font-mono truncate">{model.id}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onclick={() => {
+                        const on = isModelEnabled(model.id, currentEnabled);
+                        setModelEnabled(model.id, !on, allModels.map(m => m.id));
+                      }}
+                      class="relative flex-shrink-0 ml-3 w-9 h-5 rounded-full transition-colors
+                        {isModelEnabled(model.id, currentEnabled)
+                          ? 'bg-blue-600'
+                          : 'bg-gray-300 dark:bg-gray-600'}"
+                      role="switch"
+                      aria-checked={isModelEnabled(model.id, currentEnabled)}
+                    >
+                      <span
+                        class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform
+                          {isModelEnabled(model.id, currentEnabled) ? 'translate-x-4' : 'translate-x-0'}"
+                      ></span>
+                    </button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </div>
         {:else}
           <div class="space-y-3 text-sm text-gray-600 dark:text-gray-400">

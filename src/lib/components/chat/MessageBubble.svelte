@@ -4,6 +4,7 @@
 
   let { message }: { message: Message } = $props();
   let showCopied = $state(false);
+  let thinkingExpanded = $state(false);
 
   function copyContent() {
     navigator.clipboard.writeText(message.content);
@@ -41,8 +42,36 @@
         <p class="text-sm whitespace-pre-wrap">{message.content}</p>
       </div>
     {:else}
-      <div class="bg-gray-100 dark:bg-gray-800 rounded-2xl rounded-bl-md px-4 py-3">
-        <MarkdownRenderer content={message.content} />
+      <div class="bg-gray-100 dark:bg-gray-800 rounded-2xl rounded-bl-md px-4 py-3 space-y-2">
+        {#if message.thinking}
+          <button
+            onclick={() => thinkingExpanded = !thinkingExpanded}
+            class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+          >
+            <svg
+              class="w-3 h-3 transition-transform {thinkingExpanded ? 'rotate-90' : ''}"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+            </svg>
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+            </svg>
+            {#if message.id === 'streaming' && !message.content}
+              Thinking…
+            {:else}
+              Thought process
+            {/if}
+          </button>
+          {#if thinkingExpanded || (message.id === 'streaming' && !message.content)}
+            <div class="border-l-2 border-purple-300 dark:border-purple-600 pl-3 py-1 text-sm text-gray-500 dark:text-gray-400 italic">
+              <MarkdownRenderer content={message.thinking} />
+            </div>
+          {/if}
+        {/if}
+        {#if message.content}
+          <MarkdownRenderer content={message.content} />
+        {/if}
       </div>
     {/if}
 

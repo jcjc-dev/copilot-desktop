@@ -39,7 +39,9 @@ export async function initializeApp() {
     try {
       const { loadSettings } = await import('$lib/stores/settings');
       await loadSettings();
-    } catch {}
+    } catch (error) {
+      console.warn('Failed to load settings during recovery:', error);
+    }
   }
 }
 
