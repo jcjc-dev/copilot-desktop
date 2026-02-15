@@ -1,4 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '$lib/utils/logger';
+
+// NOTE: The interfaces below mirror Rust structs in src-tauri/src/commands.rs.
+// Run `cargo test` in src-tauri/ to auto-generate TypeScript types via ts-rs
+// into src-tauri/bindings/. Keep these definitions in sync with the generated files.
 
 export interface Settings {
   theme: string;
@@ -30,10 +35,14 @@ export interface Message {
 
 // Client lifecycle
 export async function startClient(): Promise<void> {
-  return invoke('start_client');
+  logger.debug('startClient', 'Initializing Copilot client…');
+  const result = await invoke<void>('start_client');
+  logger.debug('startClient', 'Client started successfully');
+  return result;
 }
 
 export async function stopClient(): Promise<void> {
+  logger.debug('stopClient', 'Stopping client');
   return invoke('stop_client');
 }
 
@@ -44,14 +53,19 @@ export async function listModels(): Promise<ModelInfo[]> {
 
 // Sessions
 export async function createSession(model?: string, systemPrompt?: string): Promise<string> {
-  return invoke('create_session', { model, systemPrompt });
+  logger.debug('createSession', { model, systemPrompt });
+  const id = await invoke<string>('create_session', { model, systemPrompt });
+  logger.debug('createSession', 'Session created:', id);
+  return id;
 }
 
 export async function destroySession(sessionId: string): Promise<void> {
+  logger.debug('destroySession', sessionId);
   return invoke('destroy_session', { sessionId });
 }
 
 export async function sendMessage(sessionId: string, content: string): Promise<void> {
+  logger.debug('sendMessage', { sessionId, contentLength: content.length });
   return invoke('send_message', { sessionId, content });
 }
 
