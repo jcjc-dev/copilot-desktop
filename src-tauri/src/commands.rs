@@ -47,12 +47,14 @@ fn find_copilot_cli_path() -> Option<std::path::PathBuf> {
     if let Ok(p) = std::env::var("COPILOT_CLI_PATH") {
         let path = std::path::PathBuf::from(p.trim());
         if path.exists() {
-            return Some(path);
+            tracing::info!("Found Copilot CLI via COPILOT_CLI_PATH: {}", path.display());
+            return Some(std::fs::canonicalize(&path).unwrap_or(path));
         }
     }
 
     // Check PATH (works in terminal, may not in GUI apps)
     if let Ok(p) = which::which("copilot") {
+        tracing::info!("Found Copilot CLI via PATH: {}", p.display());
         return Some(p);
     }
 
@@ -66,7 +68,10 @@ fn find_copilot_cli_path() -> Option<std::path::PathBuf> {
     for p in &extra_paths {
         let path = std::path::PathBuf::from(p);
         if path.exists() {
-            return Some(path);
+            // Resolve symlinks so the SDK gets the real binary path
+            let resolved = std::fs::canonicalize(&path).unwrap_or(path);
+            tracing::info!("Found Copilot CLI at hardcoded path: {}", resolved.display());
+            return Some(resolved);
         }
     }
 
@@ -80,14 +85,15 @@ fn find_copilot_cli_path() -> Option<std::path::PathBuf> {
         for p in &home_paths {
             let path = std::path::PathBuf::from(p);
             if path.exists() {
-                return Some(path);
+                let resolved = std::fs::canonicalize(&path).unwrap_or(path);
+                tracing::info!("Found Copilot CLI in home dir: {}", resolved.display());
+                return Some(resolved);
             }
         }
     }
 
     #[cfg(windows)]
     {
-        // Windows-specific paths
         if let Ok(p) = which::which("copilot.cmd") {
             return Some(p);
         }
@@ -102,15 +108,16 @@ fn find_copilot_cli_path() -> Option<std::path::PathBuf> {
         }
     }
 
+    tracing::warn!("Could not find Copilot CLI in any known location");
     None
 }
 
 #[tauri::command]
 pub async fn start_client(state: State<'_, AppState>) -> Result<(), String> {
     let cli_path = find_copilot_cli_path()
-        .ok_or_else(|| "Could not find Copilot CLI. Install it with: npm install -g @anthropic-ai/copilot or brew install copilot, then ensure 'copilot' is in your PATH or set COPILOT_CLI_PATH.".to_string())?;
+        .ok_or_else(|| "Could not find Copilot CLI. Install via: brew install copilot-cli, or set COPILOT_CLI_PATH env var.".to_string())?;
 
-    tracing::info!("Found Copilot CLI at: {}", cli_path.display());
+    tracing::info!("Starting Copilot client with CLI at: {}", cli_path.display());
 
     let client = copilot_sdk::Client::builder()
         .use_stdio(true)
@@ -118,11 +125,12 @@ pub async fn start_client(state: State<'_, AppState>) -> Result<(), String> {
         .build()
         .map_err(|e| format!("Failed to build client: {}", e))?;
 
-    client.start().await.map_err(|e| format!("Failed to start client: {}", e))?;
+    client.start().await.map_err(|e| format!("Failed to start client (cli_path={}): {}", cli_path.display(), e))?;
 
     let mut client_guard = state.client.write().await;
     *client_guard = Some(client);
 
+    tracing::info!("Copilot client started successfully");
     Ok(())
 }
 
