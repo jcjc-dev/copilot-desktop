@@ -84,8 +84,8 @@
       <div class="p-6 max-h-[400px] overflow-y-auto">
         {#if activeTab === 'general'}
           <div class="space-y-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Theme</label>
+            <div class="flex items-center justify-between">
+              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Theme</label>
               <div class="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
                 <button
                   onclick={() => editTheme = 'light'}
