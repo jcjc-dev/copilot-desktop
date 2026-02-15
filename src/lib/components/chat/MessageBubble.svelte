@@ -36,7 +36,7 @@
   </div>
 
   <!-- Message content -->
-  <div class="flex-1 max-w-[85%] space-y-1">
+  <div class="{message.role === 'user' ? 'max-w-[85%]' : 'flex-1 max-w-[85%]'} space-y-1">
     {#if message.role === 'user'}
       <div class="bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-2.5 inline-block">
         <p class="text-sm whitespace-pre-wrap">{message.content}</p>
