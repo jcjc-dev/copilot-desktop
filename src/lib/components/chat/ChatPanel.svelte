@@ -41,10 +41,12 @@
     {:else}
       <div class="max-w-3xl mx-auto space-y-6">
         {#each msgList as message (message.id)}
-          <MessageBubble {message} />
+          {#if !(message.id === 'streaming' && !message.content)}
+            <MessageBubble {message} />
+          {/if}
         {/each}
 
-        {#if streaming}
+        {#if streaming && !(msgList[msgList.length - 1]?.id === 'streaming' && msgList[msgList.length - 1]?.content)}
           <div class="flex gap-4 justify-start">
             <div class="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
               <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -47,7 +47,7 @@
   <Sidebar />
 
   <main
-    class="flex-1 pt-12 transition-all duration-200"
+    class="flex-1 pt-12 transition-all duration-200 overflow-hidden min-h-0"
     class:ml-64={open}
     class:ml-0={!open}
   >

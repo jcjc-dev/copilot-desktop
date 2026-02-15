@@ -8,7 +8,10 @@ use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt::init();
+    // Only init tracing in release mode; in debug, tauri_plugin_log handles logging.
+    if !cfg!(debug_assertions) {
+        tracing_subscriber::fmt::init();
+    }
 
     tauri::Builder::default()
         .manage(AppState::new())
