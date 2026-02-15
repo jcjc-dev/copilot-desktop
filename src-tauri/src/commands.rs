@@ -429,3 +429,241 @@ pub async fn update_settings(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db;
+    use crate::state::AppState;
+
+    /// Create a test AppState with a temp database
+    fn create_test_state() -> AppState {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let conn = db::open_db(tmp.path().to_str().unwrap()).unwrap();
+        db::init_schema(&conn).unwrap();
+
+        let state = AppState::new();
+        *state.db.lock().unwrap() = Some(conn);
+        // Keep tmp alive so the file isn't deleted
+        std::mem::forget(tmp);
+        state
+    }
+
+    #[test]
+    fn test_find_copilot_cli_path() {
+        let result = find_copilot_cli_path();
+        // Don't assert Some — CI might not have copilot installed
+        if let Some(path) = &result {
+            assert!(path.exists(), "Found path should exist: {:?}", path);
+            assert!(
+                std::fs::metadata(path).is_ok(),
+                "Path should be accessible: {:?}",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn test_find_copilot_cli_path_via_env() {
+        let original = std::env::var("COPILOT_CLI_PATH").ok();
+
+        unsafe { std::env::set_var("COPILOT_CLI_PATH", "/bin/sh") };
+        let result = find_copilot_cli_path();
+        assert!(result.is_some());
+        assert!(result.unwrap().to_str().unwrap().contains("sh"));
+
+        // Set to non-existent path — should fall through to other strategies
+        unsafe { std::env::set_var("COPILOT_CLI_PATH", "/nonexistent/copilot") };
+
+        // Restore original value
+        match original {
+            Some(v) => unsafe { std::env::set_var("COPILOT_CLI_PATH", v) },
+            None => unsafe { std::env::remove_var("COPILOT_CLI_PATH") },
+        }
+    }
+
+    #[test]
+    fn test_settings_types_serialize() {
+        let settings = Settings {
+            theme: "dark".to_string(),
+            default_model: Some("gpt-4o".to_string()),
+            system_prompt: Some("Be helpful".to_string()),
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("dark"));
+        assert!(json.contains("gpt-4o"));
+
+        let deserialized: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.theme, "dark");
+        assert_eq!(deserialized.default_model, Some("gpt-4o".to_string()));
+    }
+
+    #[test]
+    fn test_auth_status_serialize() {
+        let auth = AuthStatus {
+            authenticated: true,
+            username: Some("testuser".to_string()),
+        };
+        let json = serde_json::to_string(&auth).unwrap();
+        let parsed: AuthStatus = serde_json::from_str(&json).unwrap();
+        assert!(parsed.authenticated);
+        assert_eq!(parsed.username.unwrap(), "testuser");
+    }
+
+    #[test]
+    fn test_model_info_serialize() {
+        let model = ModelInfo {
+            id: "gpt-4o".to_string(),
+            name: "GPT-4o".to_string(),
+            provider: Some("OpenAI".to_string()),
+        };
+        let json = serde_json::to_string(&model).unwrap();
+        assert!(json.contains("gpt-4o"));
+        assert!(json.contains("OpenAI"));
+
+        let parsed: ModelInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "gpt-4o");
+    }
+
+    #[test]
+    fn test_conversation_serialize() {
+        let convo = Conversation {
+            id: "c-123".to_string(),
+            title: "Test Chat".to_string(),
+            model: Some("gpt-4o".to_string()),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let json = serde_json::to_string(&convo).unwrap();
+        let parsed: Conversation = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "c-123");
+        assert_eq!(parsed.title, "Test Chat");
+    }
+
+    #[test]
+    fn test_message_serialize() {
+        let msg = Message {
+            id: "m-1".to_string(),
+            conversation_id: "c-1".to_string(),
+            role: "user".to_string(),
+            content: "Hello world".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.content, "Hello world");
+        assert_eq!(parsed.role, "user");
+    }
+
+    #[test]
+    fn test_event_payloads_serialize() {
+        let delta = MessageDeltaEvent {
+            session_id: "s1".to_string(),
+            delta: "Hello ".to_string(),
+        };
+        let json = serde_json::to_string(&delta).unwrap();
+        assert!(json.contains("Hello "));
+
+        let complete = MessageCompleteEvent {
+            session_id: "s1".to_string(),
+            content: "Hello world".to_string(),
+        };
+        let json = serde_json::to_string(&complete).unwrap();
+        assert!(json.contains("Hello world"));
+
+        let error = SessionErrorEvent {
+            session_id: "s1".to_string(),
+            message: "Connection failed".to_string(),
+        };
+        let json = serde_json::to_string(&error).unwrap();
+        assert!(json.contains("Connection failed"));
+
+        let idle = SessionIdleEvent {
+            session_id: "s1".to_string(),
+        };
+        assert!(serde_json::to_string(&idle).is_ok());
+
+        let usage = UsageEvent {
+            session_id: "s1".to_string(),
+            input_tokens: Some(100.0),
+            output_tokens: Some(50.0),
+        };
+        let json = serde_json::to_string(&usage).unwrap();
+        assert!(json.contains("100"));
+        assert!(json.contains("50"));
+    }
+
+    #[test]
+    fn test_settings_none_fields_serialize() {
+        let settings = Settings {
+            theme: "light".to_string(),
+            default_model: None,
+            system_prompt: None,
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let parsed: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.theme, "light");
+        assert!(parsed.default_model.is_none());
+        assert!(parsed.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_auth_status_unauthenticated() {
+        let auth = AuthStatus {
+            authenticated: false,
+            username: None,
+        };
+        let json = serde_json::to_string(&auth).unwrap();
+        let parsed: AuthStatus = serde_json::from_str(&json).unwrap();
+        assert!(!parsed.authenticated);
+        assert!(parsed.username.is_none());
+    }
+
+    #[test]
+    fn test_create_test_state_has_working_db() {
+        let state = create_test_state();
+        let db_guard = state.db.lock().unwrap();
+        let conn = db_guard.as_ref().expect("DB should be initialized");
+
+        db::set_setting(conn, "test_key", "test_value").unwrap();
+        let val = db::get_setting(conn, "test_key").unwrap();
+        assert_eq!(val, Some("test_value".to_string()));
+    }
+
+    #[test]
+    fn test_state_db_conversation_roundtrip() {
+        let state = create_test_state();
+        let db_guard = state.db.lock().unwrap();
+        let conn = db_guard.as_ref().unwrap();
+
+        let convo = db::create_conversation(conn, "rt-1", "Roundtrip Test", Some("gpt-4o")).unwrap();
+        assert_eq!(convo.id, "rt-1");
+
+        let msg = Message {
+            id: "rt-msg-1".to_string(),
+            conversation_id: "rt-1".to_string(),
+            role: "user".to_string(),
+            content: "Testing roundtrip".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        db::save_message(conn, &msg).unwrap();
+
+        let msgs = db::get_conversation_messages(conn, "rt-1").unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "Testing roundtrip");
+
+        let convos = db::list_conversations(conn).unwrap();
+        assert_eq!(convos.len(), 1);
+    }
+
+    #[test]
+    fn test_usage_event_with_none_tokens() {
+        let usage = UsageEvent {
+            session_id: "s1".to_string(),
+            input_tokens: None,
+            output_tokens: None,
+        };
+        let json = serde_json::to_string(&usage).unwrap();
+        assert!(json.contains("null"));
+    }
+}
