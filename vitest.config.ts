@@ -10,7 +10,7 @@ export default defineConfig({
     include: ['src/**/*.{test,spec}.{js,ts}'],
     globals: true,
     environment: 'jsdom',
-    setupFiles: ['src/tests/setup.ts'],
+    setupFiles: ['src/tests/setup.ts', 'src/tests/tauri-mock-setup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

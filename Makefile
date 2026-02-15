@@ -1,4 +1,4 @@
-.PHONY: dev build test test-rust test-frontend test-e2e lint lint-rust lint-frontend clean install docker-build docker-test help
+.PHONY: dev build test test-rust test-frontend test-e2e test-smoke test-all check lint lint-rust lint-frontend clean install docker-build docker-test help
 
 # Default target
 help:
@@ -14,6 +14,9 @@ help:
 	@echo "  make lint-rust      - Run Rust linter (clippy)"
 	@echo "  make lint-frontend  - Run frontend linter (eslint + svelte-check)"
 	@echo "  make clean          - Clean build artifacts"
+	@echo "  make test-smoke     - Run smoke test (dev server + basic checks)"
+	@echo "  make test-all       - Run all tests including smoke"
+	@echo "  make check          - Full check (build + all tests)"
 	@echo "  make docker-build   - Build using Docker"
 	@echo "  make docker-test    - Run tests in Docker"
 
@@ -34,7 +37,7 @@ build:
 test: test-rust test-frontend
 
 test-rust:
-	cd src-tauri && cargo test
+	cd src-tauri && cargo test --lib
 
 test-frontend:
 	npx vitest run
@@ -57,6 +60,17 @@ lint-frontend:
 clean:
 	rm -rf build node_modules/.vite
 	cd src-tauri && cargo clean
+
+# Smoke test - validates full app starts correctly
+test-smoke:
+	bash scripts/smoke-test.sh
+
+# Run all tests including smoke
+test-all: test test-smoke
+
+# Full check (build + all tests)
+check:
+	bash scripts/check-build.sh
 
 # Docker
 docker-build:
