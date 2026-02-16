@@ -408,11 +408,11 @@ mod tests {
         for i in 0..5 {
             let role = if i % 2 == 0 { "user" } else { "assistant" };
             let msg = crate::commands::Message {
-                id: format!("msg-{}", i),
+                id: format!("msg-{i}"),
                 conversation_id: "workflow-1".to_string(),
                 role: role.to_string(),
-                content: format!("Message {}", i),
-                created_at: format!("2026-01-01T00:00:0{}Z", i),
+                content: format!("Message {i}"),
+                created_at: format!("2026-01-01T00:00:0{i}Z"),
             };
             save_message(&conn, &msg).unwrap();
         }

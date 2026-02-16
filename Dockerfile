@@ -10,13 +10,15 @@ COPY . .
 RUN npm run build && rm -rf node_modules
 
 # Stage 3: Test runner
-FROM rust:1.85-bookworm AS test
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+FROM rust:1.88-bookworm AS test
+RUN rustup component add clippy rustfmt && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 WORKDIR /app
 COPY . .
 RUN npm ci
 RUN cd src-tauri && cargo fetch
-RUN groupadd -g 1001 appuser && useradd -u 1001 -g appuser -m appuser
+RUN groupadd -g 1001 appuser && useradd -u 1001 -g appuser -m appuser && \
+    chown -R appuser:appuser /app /usr/local/cargo
 USER appuser
 CMD ["make", "test"]

@@ -120,9 +120,9 @@ fn find_copilot_cli_path() -> Option<std::path::PathBuf> {
     // Check home directory locations
     if let Ok(home) = std::env::var("HOME") {
         let home_paths = [
-            format!("{}/.local/bin/copilot", home),
-            format!("{}/.cargo/bin/copilot", home),
-            format!("{}/bin/copilot", home),
+            format!("{home}/.local/bin/copilot"),
+            format!("{home}/.cargo/bin/copilot"),
+            format!("{home}/bin/copilot"),
         ];
         for p in &home_paths {
             let path = std::path::PathBuf::from(p);
@@ -755,11 +755,10 @@ mod tests {
         let result = find_copilot_cli_path();
         // Don't assert Some — CI might not have copilot installed
         if let Some(path) = &result {
-            assert!(path.exists(), "Found path should exist: {:?}", path);
+            assert!(path.exists(), "Found path should exist: {path:?}");
             assert!(
                 std::fs::metadata(path).is_ok(),
-                "Path should be accessible: {:?}",
-                path
+                "Path should be accessible: {path:?}",
             );
         }
     }

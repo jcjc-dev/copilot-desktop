@@ -10,3 +10,9 @@ services:
       context: .
       target: test
     command: make lint
+
+  ci:
+    build:
+      context: .
+      target: test
+    command: sh -c "make lint && make test"
