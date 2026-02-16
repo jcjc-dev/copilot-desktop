@@ -1,5 +1,5 @@
-use rusqlite::{Connection, Result as SqlResult, params};
 use crate::commands::{Conversation, Message};
+use rusqlite::{params, Connection, Result as SqlResult};
 
 /// Derives a database encryption key from the database file path.
 /// This provides basic encryption at rest tied to the current file location.
@@ -66,7 +66,8 @@ fn set_file_permissions(path: &str) {
 }
 
 pub fn init_schema(conn: &Connection) -> SqlResult<()> {
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
@@ -90,7 +91,8 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
-    ")?;
+    ",
+    )?;
     Ok(())
 }
 
@@ -112,7 +114,11 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> SqlResult<()> {
     Ok(())
 }
 
-pub fn list_conversations(conn: &Connection, limit: Option<i64>, offset: Option<i64>) -> SqlResult<Vec<Conversation>> {
+pub fn list_conversations(
+    conn: &Connection,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> SqlResult<Vec<Conversation>> {
     let limit = limit.unwrap_or(50);
     let offset = offset.unwrap_or(0);
     let mut stmt = conn.prepare(
@@ -130,7 +136,12 @@ pub fn list_conversations(conn: &Connection, limit: Option<i64>, offset: Option<
     rows.collect()
 }
 
-pub fn create_conversation(conn: &Connection, id: &str, title: &str, model: Option<&str>) -> SqlResult<Conversation> {
+pub fn create_conversation(
+    conn: &Connection,
+    id: &str,
+    title: &str,
+    model: Option<&str>,
+) -> SqlResult<Conversation> {
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "INSERT INTO conversations (id, title, model) VALUES (?1, ?2, ?3)",
@@ -154,7 +165,9 @@ pub fn create_conversation(conn: &Connection, id: &str, title: &str, model: Opti
 }
 
 pub fn get_conversation(conn: &Connection, id: &str) -> SqlResult<Option<Conversation>> {
-    let mut stmt = conn.prepare("SELECT id, title, model, created_at, updated_at FROM conversations WHERE id = ?1")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, title, model, created_at, updated_at FROM conversations WHERE id = ?1",
+    )?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
         Ok(Some(Conversation {
@@ -169,7 +182,12 @@ pub fn get_conversation(conn: &Connection, id: &str) -> SqlResult<Option<Convers
     }
 }
 
-pub fn get_conversation_messages(conn: &Connection, conversation_id: &str, limit: Option<i64>, offset: Option<i64>) -> SqlResult<Vec<Message>> {
+pub fn get_conversation_messages(
+    conn: &Connection,
+    conversation_id: &str,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> SqlResult<Vec<Message>> {
     let limit = limit.unwrap_or(100);
     let offset = offset.unwrap_or(0);
     let mut stmt = conn.prepare(
@@ -189,7 +207,10 @@ pub fn get_conversation_messages(conn: &Connection, conversation_id: &str, limit
 
 pub fn delete_conversation(conn: &Connection, id: &str) -> SqlResult<()> {
     let tx = conn.unchecked_transaction()?;
-    tx.execute("DELETE FROM messages WHERE conversation_id = ?1", params![id])?;
+    tx.execute(
+        "DELETE FROM messages WHERE conversation_id = ?1",
+        params![id],
+    )?;
     tx.execute("DELETE FROM conversations WHERE id = ?1", params![id])?;
     tx.commit()
 }
@@ -207,6 +228,7 @@ pub fn save_message(conn: &Connection, msg: &Message) -> SqlResult<()> {
     tx.commit()
 }
 
+#[allow(dead_code)]
 pub fn update_conversation_title(conn: &Connection, id: &str, title: &str) -> SqlResult<()> {
     conn.execute(
         "UPDATE conversations SET title = ?1, updated_at = datetime('now') WHERE id = ?2",
@@ -230,8 +252,12 @@ mod tests {
     #[test]
     fn test_init_schema() {
         let (conn, _tmp) = setup_test_db();
-        let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table'").unwrap();
-        let tables: Vec<String> = stmt.query_map([], |row| row.get(0)).unwrap()
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .unwrap();
+        let tables: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
             .filter_map(|r| r.ok())
             .collect();
         assert!(tables.contains(&"settings".to_string()));
@@ -246,10 +272,16 @@ mod tests {
         assert_eq!(get_setting(&conn, "theme").unwrap(), None);
 
         set_setting(&conn, "theme", "dark").unwrap();
-        assert_eq!(get_setting(&conn, "theme").unwrap(), Some("dark".to_string()));
+        assert_eq!(
+            get_setting(&conn, "theme").unwrap(),
+            Some("dark".to_string())
+        );
 
         set_setting(&conn, "theme", "light").unwrap();
-        assert_eq!(get_setting(&conn, "theme").unwrap(), Some("light".to_string()));
+        assert_eq!(
+            get_setting(&conn, "theme").unwrap(),
+            Some("light".to_string())
+        );
     }
 
     #[test]
@@ -347,11 +379,13 @@ mod tests {
         conn.execute(
             "UPDATE conversations SET updated_at = '2026-01-01T00:00:00' WHERE id = 'old'",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "UPDATE conversations SET updated_at = '2026-01-02T00:00:00' WHERE id = 'new'",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let convos = list_conversations(&conn, None, None).unwrap();
         assert_eq!(convos.len(), 2);
@@ -366,7 +400,8 @@ mod tests {
         let (conn, _tmp) = setup_test_db();
 
         // 1. Create a conversation
-        let convo = create_conversation(&conn, "workflow-1", "My Project Help", Some("gpt-4")).unwrap();
+        let convo =
+            create_conversation(&conn, "workflow-1", "My Project Help", Some("gpt-4")).unwrap();
         assert_eq!(convo.title, "My Project Help");
 
         // 2. Add multiple messages
@@ -422,15 +457,30 @@ mod tests {
         set_setting(&conn, "system_prompt", "You are a helpful assistant").unwrap();
 
         // Verify
-        assert_eq!(get_setting(&conn, "theme").unwrap(), Some("dark".to_string()));
-        assert_eq!(get_setting(&conn, "default_model").unwrap(), Some("gpt-4o".to_string()));
-        assert_eq!(get_setting(&conn, "system_prompt").unwrap(), Some("You are a helpful assistant".to_string()));
+        assert_eq!(
+            get_setting(&conn, "theme").unwrap(),
+            Some("dark".to_string())
+        );
+        assert_eq!(
+            get_setting(&conn, "default_model").unwrap(),
+            Some("gpt-4o".to_string())
+        );
+        assert_eq!(
+            get_setting(&conn, "system_prompt").unwrap(),
+            Some("You are a helpful assistant".to_string())
+        );
 
         // Update
         set_setting(&conn, "theme", "light").unwrap();
-        assert_eq!(get_setting(&conn, "theme").unwrap(), Some("light".to_string()));
+        assert_eq!(
+            get_setting(&conn, "theme").unwrap(),
+            Some("light".to_string())
+        );
         // Other settings unchanged
-        assert_eq!(get_setting(&conn, "default_model").unwrap(), Some("gpt-4o".to_string()));
+        assert_eq!(
+            get_setting(&conn, "default_model").unwrap(),
+            Some("gpt-4o".to_string())
+        );
     }
 
     #[test]

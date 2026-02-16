@@ -1,10 +1,10 @@
+use crate::db;
+use crate::error::AppError;
+use crate::state::AppState;
 use std::time::Duration;
 use tauri::{Emitter, State};
 use tokio_util::sync::CancellationToken;
 use ts_rs::TS;
-use crate::error::AppError;
-use crate::state::AppState;
-use crate::db;
 
 const MAX_MESSAGE_SIZE: usize = 1_000_000; // 1MB
 const MAX_TITLE_LENGTH: usize = 200;
@@ -17,9 +17,9 @@ where
     F: FnOnce(&rusqlite::Connection) -> Result<R, String>,
 {
     let db_guard = state.db.lock().await;
-    let conn = db_guard.as_ref().ok_or_else(|| {
-        "Database not initialized.".to_string()
-    })?;
+    let conn = db_guard
+        .as_ref()
+        .ok_or_else(|| "Database not initialized.".to_string())?;
     f(conn)
 }
 const DEFAULT_EVENT_TIMEOUT_SECS: u64 = 120;
@@ -99,17 +99,20 @@ fn find_copilot_cli_path() -> Option<std::path::PathBuf> {
 
     // Common install locations for GUI apps that don't inherit full shell PATH
     let extra_paths = [
-        "/opt/homebrew/bin/copilot",        // Homebrew Apple Silicon
-        "/usr/local/bin/copilot",           // Homebrew Intel / manual install
-        "/usr/bin/copilot",                 // System-wide
-        "/snap/bin/copilot",                // Snap (Linux)
+        "/opt/homebrew/bin/copilot", // Homebrew Apple Silicon
+        "/usr/local/bin/copilot",    // Homebrew Intel / manual install
+        "/usr/bin/copilot",          // System-wide
+        "/snap/bin/copilot",         // Snap (Linux)
     ];
     for p in &extra_paths {
         let path = std::path::PathBuf::from(p);
         if path.exists() {
             // Resolve symlinks so the SDK gets the real binary path
             let resolved = std::fs::canonicalize(&path).unwrap_or(path);
-            tracing::info!("Found Copilot CLI at hardcoded path: {}", resolved.display());
+            tracing::info!(
+                "Found Copilot CLI at hardcoded path: {}",
+                resolved.display()
+            );
             return Some(resolved);
         }
     }
@@ -140,7 +143,10 @@ fn find_copilot_cli_path() -> Option<std::path::PathBuf> {
             return Some(p);
         }
         if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
-            let p = std::path::PathBuf::from(format!("{}\\Programs\\copilot-cli\\copilot.exe", appdata));
+            let p = std::path::PathBuf::from(format!(
+                "{}\\Programs\\copilot-cli\\copilot.exe",
+                appdata
+            ));
             if p.exists() {
                 return Some(p);
             }
@@ -156,16 +162,25 @@ pub async fn start_client(state: State<'_, AppState>) -> Result<(), String> {
     let cli_path = find_copilot_cli_path()
         .ok_or_else(|| -> String { AppError::NotFound("Could not find Copilot CLI. Install via: brew install copilot-cli, or set COPILOT_CLI_PATH env var.".into()).into() })?;
 
-    tracing::info!("Starting Copilot client with CLI at: {}", cli_path.display());
+    tracing::info!(
+        "Starting Copilot client with CLI at: {}",
+        cli_path.display()
+    );
 
     // Isolate the SDK process into a dedicated directory so it does NOT inherit
     // the repo working directory and cannot access the source tree.
     let isolated_dir = std::env::temp_dir().join("copilot-desktop-sandbox");
-    std::fs::create_dir_all(&isolated_dir)
-        .map_err(|e| -> String {
-            tracing::error!("Failed to create sandbox dir ({}): {}", isolated_dir.display(), e);
-            AppError::Internal("Failed to initialize working directory. Please check disk permissions.".into()).into()
-        })?;
+    std::fs::create_dir_all(&isolated_dir).map_err(|e| -> String {
+        tracing::error!(
+            "Failed to create sandbox dir ({}): {}",
+            isolated_dir.display(),
+            e
+        );
+        AppError::Internal(
+            "Failed to initialize working directory. Please check disk permissions.".into(),
+        )
+        .into()
+    })?;
     tracing::info!("SDK sandbox directory: {}", isolated_dir.display());
 
     let client = copilot_sdk::Client::builder()
@@ -175,12 +190,22 @@ pub async fn start_client(state: State<'_, AppState>) -> Result<(), String> {
         .build()
         .map_err(|e| -> String {
             tracing::error!("Failed to build client: {}", e);
-            AppError::Internal("Failed to build client. Please check your Copilot CLI installation.".into()).into()
+            AppError::Internal(
+                "Failed to build client. Please check your Copilot CLI installation.".into(),
+            )
+            .into()
         })?;
 
     client.start().await.map_err(|e| -> String {
-        tracing::error!("Failed to start client (cli_path={}): {}", cli_path.display(), e);
-        AppError::Internal("Failed to start client. Please check that Copilot CLI is installed.".into()).into()
+        tracing::error!(
+            "Failed to start client (cli_path={}): {}",
+            cli_path.display(),
+            e
+        );
+        AppError::Internal(
+            "Failed to start client. Please check that Copilot CLI is installed.".into(),
+        )
+        .into()
     })?;
 
     let mut client_guard = state.client.write().await;
@@ -229,17 +254,19 @@ pub async fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelInfo>, S
     let client_guard = state.client.read().await;
     let client = client_guard.as_ref().ok_or("Client not started")?;
 
-    let sdk_models = client.list_models().await
-        .map_err(|e| {
-            tracing::error!("Failed to list models: {}", e);
-            "Failed to list models. Please check your connection and try again.".to_string()
-        })?;
+    let sdk_models = client.list_models().await.map_err(|e| {
+        tracing::error!("Failed to list models: {}", e);
+        "Failed to list models. Please check your connection and try again.".to_string()
+    })?;
 
-    let models: Vec<ModelInfo> = sdk_models.iter().map(|m| ModelInfo {
-        id: m.id.clone(),
-        name: m.name.clone(),
-        provider: None,
-    }).collect();
+    let models: Vec<ModelInfo> = sdk_models
+        .iter()
+        .map(|m| ModelInfo {
+            id: m.id.clone(),
+            name: m.name.clone(),
+            provider: None,
+        })
+        .collect();
 
     // Cache result
     {
@@ -290,30 +317,29 @@ pub async fn create_session(
         });
     }
 
-    let session = client.create_session(config).await
-        .map_err(|e| {
-            tracing::error!("Failed to create session: {}", e);
-            "Failed to create session. Please try again.".to_string()
-        })?;
+    let session = client.create_session(config).await.map_err(|e| {
+        tracing::error!("Failed to create session: {}", e);
+        "Failed to create session. Please try again.".to_string()
+    })?;
 
     let session_id = session.session_id().to_string();
 
     let mut sessions = state.sessions.write().await;
-    sessions.insert(session_id.clone(), crate::state::SessionInfo {
-        session,
-        model,
-        system_prompt,
-        cancel_token: CancellationToken::new(),
-    });
+    sessions.insert(
+        session_id.clone(),
+        crate::state::SessionInfo {
+            session,
+            model,
+            system_prompt,
+            cancel_token: CancellationToken::new(),
+        },
+    );
 
     Ok(session_id)
 }
 
 #[tauri::command]
-pub async fn destroy_session(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<(), String> {
+pub async fn destroy_session(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     let mut sessions = state.sessions.write().await;
     if let Some(info) = sessions.remove(&session_id) {
         // Cancel the event-processing task so it stops emitting events immediately
@@ -324,29 +350,34 @@ pub async fn destroy_session(
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
+#[allow(dead_code)]
 pub struct MessageDeltaEvent {
     pub session_id: String,
     pub delta: String,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
+#[allow(dead_code)]
 pub struct MessageCompleteEvent {
     pub session_id: String,
     pub content: String,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
+#[allow(dead_code)]
 pub struct SessionErrorEvent {
     pub session_id: String,
     pub message: String,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
+#[allow(dead_code)]
 pub struct SessionIdleEvent {
     pub session_id: String,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
+#[allow(dead_code)]
 pub struct UsageEvent {
     pub session_id: String,
     pub input_tokens: Option<f64>,
@@ -361,7 +392,10 @@ pub async fn send_message(
     content: String,
 ) -> Result<(), String> {
     if content.len() > MAX_MESSAGE_SIZE {
-        return Err(AppError::Validation("Message is too large. Please shorten your message.".into()).into());
+        return Err(AppError::Validation(
+            "Message is too large. Please shorten your message.".into(),
+        )
+        .into());
     }
     if content.trim().is_empty() {
         return Err(AppError::Validation("Message cannot be empty.".into()).into());
@@ -369,18 +403,21 @@ pub async fn send_message(
 
     let session = {
         let sessions = state.sessions.read().await;
-        let session_info = sessions.get(&session_id)
+        let session_info = sessions
+            .get(&session_id)
             .ok_or::<String>(AppError::NotFound("Session not found".into()).into())?;
-        (session_info.session.clone(), session_info.cancel_token.clone())
+        (
+            session_info.session.clone(),
+            session_info.cancel_token.clone(),
+        )
     };
 
     let mut events = session.0.subscribe();
 
-    session.0.send(&*content).await
-        .map_err(|e| -> String {
-            tracing::error!("Failed to send message (session {}): {}", session_id, e);
-            AppError::Network("Failed to send message. Please try again.".into()).into()
-        })?;
+    session.0.send(&*content).await.map_err(|e| -> String {
+        tracing::error!("Failed to send message (session {}): {}", session_id, e);
+        AppError::Network("Failed to send message. Please try again.".into()).into()
+    })?;
 
     let sid = session_id;
     let app_handle = app.clone();
@@ -389,7 +426,11 @@ pub async fn send_message(
     let cancel = session.1;
     tokio::spawn(async move {
         if verbose {
-            tracing::debug!("[VERBOSE] Event loop started for session {} (event timeout: {:?})", sid, timeout);
+            tracing::debug!(
+                "[VERBOSE] Event loop started for session {} (event timeout: {:?})",
+                sid,
+                timeout
+            );
         }
         let mut accumulated_content = String::with_capacity(4096);
         let mut got_any_delta = false;
@@ -544,7 +585,8 @@ pub async fn list_conversations(
             tracing::error!("Failed to list conversations: {}", e);
             "Failed to list conversations.".to_string()
         })
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -561,14 +603,15 @@ pub async fn get_conversation(
                 "Failed to load conversation.".to_string()
             })?
             .ok_or("Conversation not found")?;
-        let msgs = db::get_conversation_messages(conn, &conversation_id, limit, offset)
-            .map_err(|e| {
+        let msgs =
+            db::get_conversation_messages(conn, &conversation_id, limit, offset).map_err(|e| {
                 tracing::error!("Failed to get conversation messages: {}", e);
                 "Failed to load conversation messages.".to_string()
             })?;
 
         Ok((convo, msgs))
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -589,12 +632,12 @@ pub async fn create_conversation(
     }
 
     with_db(&state, |conn| {
-        db::create_conversation(conn, &id, &title, model.as_deref())
-            .map_err(|e| {
-                tracing::error!("Failed to create conversation: {}", e);
-                "Failed to create conversation.".to_string()
-            })
-    }).await
+        db::create_conversation(conn, &id, &title, model.as_deref()).map_err(|e| {
+            tracing::error!("Failed to create conversation: {}", e);
+            "Failed to create conversation.".to_string()
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -607,20 +650,19 @@ pub async fn delete_conversation(
             tracing::error!("Failed to delete conversation: {}", e);
             "Failed to delete conversation.".to_string()
         })
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn save_message(
-    state: State<'_, AppState>,
-    message: Message,
-) -> Result<(), String> {
+pub async fn save_message(state: State<'_, AppState>, message: Message) -> Result<(), String> {
     with_db(&state, |conn| {
         db::save_message(conn, &message).map_err(|e| {
             tracing::error!("Failed to save message: {}", e);
             "Failed to save message.".to_string()
         })
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -632,26 +674,26 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
                 "Failed to load settings.".to_string()
             })?
             .unwrap_or_else(|| "dark".to_string());
-        let default_model = crate::db::get_setting(conn, "default_model")
-            .map_err(|e| {
-                tracing::error!("Failed to get setting 'default_model': {}", e);
-                "Failed to load settings.".to_string()
-            })?;
-        let system_prompt = crate::db::get_setting(conn, "system_prompt")
-            .map_err(|e| {
-                tracing::error!("Failed to get setting 'system_prompt': {}", e);
-                "Failed to load settings.".to_string()
-            })?;
+        let default_model = crate::db::get_setting(conn, "default_model").map_err(|e| {
+            tracing::error!("Failed to get setting 'default_model': {}", e);
+            "Failed to load settings.".to_string()
+        })?;
+        let system_prompt = crate::db::get_setting(conn, "system_prompt").map_err(|e| {
+            tracing::error!("Failed to get setting 'system_prompt': {}", e);
+            "Failed to load settings.".to_string()
+        })?;
 
-        Ok(Settings { theme, default_model, system_prompt })
-    }).await
+        Ok(Settings {
+            theme,
+            default_model,
+            system_prompt,
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn update_settings(
-    state: State<'_, AppState>,
-    settings: Settings,
-) -> Result<(), String> {
+pub async fn update_settings(state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
     if settings.theme.len() > MAX_SETTING_VALUE_SIZE {
         return Err("Theme value is too large.".to_string());
     }
@@ -685,7 +727,8 @@ pub async fn update_settings(
         }
 
         Ok(())
-    }).await
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -894,7 +937,8 @@ mod tests {
         let db_guard = state.db.blocking_lock();
         let conn = db_guard.as_ref().unwrap();
 
-        let convo = db::create_conversation(conn, "rt-1", "Roundtrip Test", Some("gpt-4o")).unwrap();
+        let convo =
+            db::create_conversation(conn, "rt-1", "Roundtrip Test", Some("gpt-4o")).unwrap();
         assert_eq!(convo.id, "rt-1");
 
         let msg = Message {

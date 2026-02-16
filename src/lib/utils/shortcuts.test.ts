@@ -5,8 +5,8 @@ import { handleGlobalKeydown, shortcuts } from './shortcuts';
 vi.mock('$lib/services/conversations', () => ({
   startNewChat: vi.fn(),
 }));
-vi.mock('$lib/stores/settings', () => {
-  const { writable } = require('svelte/store');
+vi.mock('$lib/stores/settings', async () => {
+  const { writable } = await import('svelte/store');
   return { settingsOpen: writable(false) };
 });
 vi.mock('$lib/stores/sidebar', () => ({

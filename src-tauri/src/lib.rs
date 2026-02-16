@@ -3,8 +3,8 @@ mod db;
 pub mod error;
 mod state;
 
-use tauri::Manager;
 use state::AppState;
+use tauri::Manager;
 
 /// Check whether verbose mode is enabled via the COPILOT_VERBOSE environment variable.
 /// Set COPILOT_VERBOSE=1 (or =true / =debug / =trace) to enable verbose logging.
@@ -15,7 +15,9 @@ pub fn is_verbose() -> bool {
 }
 
 fn verbose_log_level() -> log::LevelFilter {
-    let val = std::env::var("COPILOT_VERBOSE").unwrap_or_default().to_lowercase();
+    let val = std::env::var("COPILOT_VERBOSE")
+        .unwrap_or_default()
+        .to_lowercase();
     match val.as_str() {
         "trace" => log::LevelFilter::Trace,
         "1" | "true" | "debug" => log::LevelFilter::Debug,
@@ -47,22 +49,21 @@ pub fn run() {
         .setup(move |app| {
             if cfg!(debug_assertions) {
                 let level = verbose_log_level();
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(level)
-                        .build(),
-                )?;
+                app.handle()
+                    .plugin(tauri_plugin_log::Builder::default().level(level).build())?;
                 if verbose {
                     tracing::info!("Verbose mode enabled — log level: {:?}", level);
                 }
             }
 
-            let app_dir = app.path().app_data_dir().expect("Failed to get app data dir");
+            let app_dir = app
+                .path()
+                .app_data_dir()
+                .expect("Failed to get app data dir");
             std::fs::create_dir_all(&app_dir).expect("Failed to create app data dir");
             let db_path = app_dir.join("copilot-desktop.db");
 
-            let conn = db::open_db(db_path.to_str().unwrap())
-                .expect("Failed to open database");
+            let conn = db::open_db(db_path.to_str().unwrap()).expect("Failed to open database");
             db::init_schema(&conn).expect("Failed to init schema");
 
             let state = app.state::<AppState>();

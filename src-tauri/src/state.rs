@@ -1,13 +1,15 @@
+use copilot_sdk::{Client, Session};
+use rusqlite::Connection;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
-use copilot_sdk::{Client, Session};
-use rusqlite::Connection;
 
 pub struct SessionInfo {
     pub session: Arc<Session>,
+    #[allow(dead_code)]
     pub model: Option<String>,
+    #[allow(dead_code)]
     pub system_prompt: Option<String>,
     /// Token used to cancel the event-processing task when the session is destroyed.
     pub cancel_token: CancellationToken,
