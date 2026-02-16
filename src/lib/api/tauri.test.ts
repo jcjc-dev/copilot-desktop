@@ -82,7 +82,7 @@ describe('Tauri IPC Commands', () => {
       const receivedArgs: Array<{ settings: Settings }> = [];
       mockIPC((cmd, args) => {
         if (cmd === 'update_settings') {
-          receivedArgs.push(args);
+          receivedArgs.push(args as { settings: Settings });
           return null;
         }
       });
@@ -128,7 +128,7 @@ describe('Tauri IPC Commands', () => {
       let deletedId = '';
       mockIPC((cmd, args) => {
         if (cmd === 'delete_conversation') {
-          deletedId = (args as DeleteConversationArgs).conversationId;
+          deletedId = (args as unknown as DeleteConversationArgs).conversationId;
           return null;
         }
       });
@@ -142,7 +142,7 @@ describe('Tauri IPC Commands', () => {
       let sentArgs: SendMessageArgs | null = null;
       mockIPC((cmd, args) => {
         if (cmd === 'send_message') {
-          sentArgs = args as SendMessageArgs;
+          sentArgs = args as unknown as SendMessageArgs;
           return null;
         }
       });
